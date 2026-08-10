@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # Debian bookworm ships PHP 8.2. The unit name has to carry the version because
 # avian/api/birdnet-status.php probes php8.2-fpm / php8.3-fpm / php8.4-fpm by
 # name; the systemctl shim resolves whichever one exists.

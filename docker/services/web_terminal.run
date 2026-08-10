@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # Mirrors web_terminal.service from install_services.sh. Caddy proxies
 # /terminal here. Runs unprivileged, so the `su` below still demands the
 # account password: this is a login prompt, not an open shell.

@@ -78,14 +78,20 @@ link_state() {
     base="$DATA_DIR/$rel"
     target="$my_dir/$rel"
 
-    # Seed from whatever the image shipped, if anything, else an empty file.
-    if [ ! -e "$base" ]; then
-      if [ -f "$target" ] && [ ! -L "$target" ]; then
-        log "seeding $rel from the image"
-        cp -a "$target" "$base"
-      else
-        : > "$base"
-      fi
+    # Seed from whatever the image shipped, if anything. If the image shipped
+    # nothing, deliberately leave the volume path ABSENT rather than touching an
+    # empty file, so the symlink dangles until something writes through it.
+    #
+    # An empty placeholder looks harmless and is not. generate_BirdDB in
+    # scripts/install_lib.sh branches on `[ -f BirdDB.txt ]`: with a placeholder
+    # it takes the "file exists, add the header" path, which is
+    # `sed '1 i\...'` - and sed inserts nothing into a file with no line 1. The
+    # header silently never gets written. Absent, the first branch runs instead
+    # and touch+tee create the file through the symlink correctly. The same
+    # first-run-detection logic exists all over upstream, so let it see the truth.
+    if [ ! -e "$base" ] && [ -f "$target" ] && [ ! -L "$target" ]; then
+      log "seeding $rel from the image"
+      cp -a "$target" "$base"
     fi
 
     mkdir -p "$(dirname "$target")"
@@ -274,11 +280,34 @@ check_audio() {
 # ---------------------------------------------------------------------------
 # These run on every boot rather than at build time because they all write into
 # volume-backed paths, which do not exist while the image is being built.
+# Docker creates a mount point that does not exist in the image as root:root,
+# and a bind mount always arrives with the host's ownership regardless of what
+# the image had. Either way create_necessary_dirs, which runs everything through
+# `sudo -u birdnet`, cannot mkdir inside a root-owned directory.
+#
+# Only the mount points themselves, never recursive: the recordings volume can
+# hold tens of thousands of files and this runs on every boot. The one-time
+# recursive pass is fix_permissions, guarded by a marker.
+ensure_data_roots() {
+  local d
+  for d in "$RECS_DIR" "$DATA_DIR" "$DATA_DIR/scripts" "$CONFIG_DIR"; do
+    mkdir -p "$d"
+    if [ "$(stat -c '%U' "$d")" != birdnet ]; then
+      log "taking ownership of $d"
+      chown birdnet:birdnet "$d"
+    fi
+    # g+w so php-fpm (running as caddy, a member of the birdnet group) can write.
+    chmod g+rwx "$d" 2>/dev/null || true
+  done
+}
+
 setup_runtime() {
   source "$CONFIG_DIR/birdnet.conf"
   source "$my_dir/scripts/install_lib.sh"
 
   export RECS_DIR="${RECS_DIR:-$RECS_DIR_DEFAULT}"
+
+  ensure_data_roots
 
   # These functions are shared with the bare-metal installer, which runs without
   # errexit and tolerates individual symlink failures. Honour the environment

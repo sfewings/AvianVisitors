@@ -77,7 +77,12 @@ generate_BirdDB() {
     sudo -u ${USER} touch $my_dir/BirdDB.txt
     echo "Date;Time;Sci_Name;Com_Name;Confidence;Lat;Lon;Cutoff;Week;Sens;Overlap" | sudo -u ${USER} tee -a $my_dir/BirdDB.txt
   elif ! grep Date $my_dir/BirdDB.txt;then
-    sudo -u ${USER} sed -i '1 i\Date;Time;Sci_Name;Com_Name;Confidence;Lat;Lon;Cutoff;Week;Sens;Overlap' $my_dir/BirdDB.txt
+    # --follow-symlinks matters in the Docker install, where BirdDB.txt is a
+    # symlink onto a volume: plain `sed -i` writes a temp file and renames over
+    # the link, replacing it with a regular file in the image layer, so the
+    # header lands somewhere that is discarded on the next image pull. No effect
+    # on bare metal, where the path is a regular file.
+    sudo -u ${USER} sed -i --follow-symlinks '1 i\Date;Time;Sci_Name;Com_Name;Confidence;Lat;Lon;Cutoff;Week;Sens;Overlap' $my_dir/BirdDB.txt
   fi
   chown $USER:$USER ${my_dir}/BirdDB.txt && chmod g+rw ${my_dir}/BirdDB.txt
 }

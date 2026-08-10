@@ -134,9 +134,56 @@ RUN chmod 0755 /usr/local/sbin/systemctl /usr/local/sbin/journalctl \
 COPY docker/avian-container-init.sh /usr/local/bin/avian-container-init
 RUN chmod 0755 /usr/local/bin/avian-container-init
 
-# --- supervised services ----------------------------------------------------
 COPY docker/services /tmp/services
 COPY docker/build-s6-tree.sh /tmp/build-s6-tree.sh
+
+# --- normalise line endings -------------------------------------------------
+# Git on Windows checks out CRLF by default (core.autocrlf=true). The build
+# context is the working tree, so on a Windows host every script arrives with
+# CRLF and dies inside the image with the memorable
+#   /usr/bin/env: 'bash\r': No such file or directory
+# .gitattributes prevents this for fresh clones, but not for a checkout made
+# before it existed, and not if someone overrides it. Strip CR from everything a
+# shell or cron parses. Idempotent, and a no-op on a correct LF checkout.
+#
+# Deliberately limited to shell and cron: PHP, Python, JS and JSON all parse
+# CRLF perfectly well, and the interpreters are invoked explicitly rather than
+# through a shebang, so rewriting them would be churn for no gain.
+RUN find /home/birdnet/BirdNET-Pi /tmp/services /usr/local/sbin /usr/local/bin \
+      \( -name '*.sh' -o -name '*.run' -o -name '*.cron' -o -name 'SERVICES' \
+         -o -name 'gotty' -o -name 'bashrc' -o -name 'systemctl' -o -name 'journalctl' \
+         -o -name 'reboot' -o -name 'service' -o -name 'pulseaudio' \
+         -o -name 'avian-container-init' \) \
+      -type f -print0 \
+    | xargs -0 --no-run-if-empty sed -i 's/\r$//' \
+    && sed -i 's/\r$//' /tmp/build-s6-tree.sh \
+    && head -1 /home/birdnet/BirdNET-Pi/scripts/install_config.sh | od -c | head -2
+
+# --- normalise ownership and modes ------------------------------------------
+# Do not trust the permissions the build context carried in. A Windows or
+# OneDrive checkout has no POSIX modes for BuildKit to preserve, and what it
+# synthesises is not always sane: scripts/ arrives as dr-xr-xr-x, with no owner
+# write bit, so the `sudo -u birdnet ln -fs ... $my_dir/scripts` calls in
+# create_necessary_dirs fail and the container refuses to boot. The sed pass
+# above also rewrites files as root.
+#
+# Group-writable because php-fpm runs as caddy, caddy is in the birdnet group,
+# and the web UI edits files in this tree. Same end state as the bare-metal
+# installer's `chmod -R g+rw $my_dir`.
+RUN chown -R birdnet:birdnet /home/birdnet/BirdNET-Pi \
+    && find /home/birdnet/BirdNET-Pi -type d -exec chmod 0775 {} + \
+    && find /home/birdnet/BirdNET-Pi -type f -exec chmod g+rw {} + \
+    && test -w /home/birdnet/BirdNET-Pi/scripts \
+    && su -s /bin/bash birdnet -c 'touch /home/birdnet/BirdNET-Pi/scripts/.probe && rm /home/birdnet/BirdNET-Pi/scripts/.probe'
+
+# Created here, owned by birdnet, so a fresh named volume mounted over it
+# inherits that ownership from the image. Docker seeds an empty named volume
+# from the image path, root:root included if we leave it to be auto-created.
+# avian-container-init re-checks this at runtime, which is what covers bind
+# mounts: those are never seeded from the image.
+RUN install -d -o birdnet -g birdnet -m 0775 /home/birdnet/BirdSongs
+
+# --- supervised services ----------------------------------------------------
 RUN chmod +x /tmp/build-s6-tree.sh \
     && /tmp/build-s6-tree.sh /tmp/services \
     && rm -rf /tmp/services /tmp/build-s6-tree.sh
@@ -145,12 +192,33 @@ RUN chmod +x /tmp/build-s6-tree.sh \
 # Only the steps that write into the image. Everything that touches a
 # volume-backed path (directories, database, Caddyfile, icecast passwords) is
 # deferred to avian-container-init, because those paths do not exist yet.
+#
+# RUN defaults to /bin/sh, which on Debian is dash. Sourcing install_lib.sh
+# under dash is a parse error: config_icecast uses a bash array, and the whole
+# file is parsed even though this layer only calls two other functions. Declared
+# here rather than at the top of the stage so the expensive apt layers above
+# keep their cache.
+SHELL ["/bin/bash", "-c"]
+
 RUN set -eux; \
     export HOME=/home/birdnet USER=birdnet my_dir=/home/birdnet/BirdNET-Pi; \
     . "$my_dir/scripts/install_lib.sh"; \
     install_scripts; \
     configure_caddy_php; \
     chmod g+rx /home/birdnet
+
+# Pin php-fpm to the un-versioned socket path.
+#
+# update_caddyfile.sh discovers the socket by globbing /run/php/php*-fpm.sock and
+# falls back to /run/php/php-fpm.sock when the glob finds nothing. On bare metal
+# php-fpm is already running when that script executes, so the glob wins. In the
+# container the Caddyfile is written by avian-container-init, which by design
+# runs before any service starts, so the glob always finds nothing and the
+# fallback is always what lands in the Caddyfile. Making the pool listen on
+# exactly that path turns a guaranteed 502 on every .php request into a
+# deterministic match, and keeps the glob correct too.
+RUN sed -i 's|^listen = .*|listen = /run/php/php-fpm.sock|' /etc/php/8.2/fpm/pool.d/www.conf \
+    && grep -n '^listen' /etc/php/8.2/fpm/pool.d/www.conf
 
 # --- cron -------------------------------------------------------------------
 # cleanup + weekly_report only. automatic_update.cron is deliberately omitted;
@@ -159,11 +227,17 @@ RUN sed 's/\$USER/birdnet/g' /home/birdnet/BirdNET-Pi/templates/cleanup.cron >> 
     && sed 's/\$USER/birdnet/g' /home/birdnet/BirdNET-Pi/templates/weekly_report.cron >> /etc/crontab
 
 # --- runtime config ---------------------------------------------------------
+# /command must be on PATH: that is where s6-overlay installs s6-svstat, s6-svc
+# and s6-setuidgid. The s6 tarball adds it via /etc/profile, which a container
+# process never reads, so setting PATH explicitly here without /command leaves
+# the systemctl shim unable to query any service state (every unit reports
+# "inactive" while running perfectly) and every run script unable to drop
+# privileges.
 ENV TZ=UTC \
     S6_KEEP_ENV=1 \
     S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \
-    PATH="/home/birdnet/BirdNET-Pi/birdnet/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    PATH="/command:/home/birdnet/BirdNET-Pi/birdnet/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 VOLUME ["/config", "/data", "/home/birdnet/BirdSongs"]
 

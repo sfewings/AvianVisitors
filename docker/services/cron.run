@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # Replaces the crontab lines install_services.sh appends to /etc/crontab:
 # cleanup.cron (disk_check, disk_species_clean, cleanup) and weekly_report.cron.
 #

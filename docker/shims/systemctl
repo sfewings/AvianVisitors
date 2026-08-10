@@ -18,6 +18,33 @@
 
 set -uo pipefail
 
+# s6-supervise creates each service's supervise/ directory as root, mode 0700,
+# so an unprivileged caller cannot read service state at all: s6-svstat fails
+# with "Permission denied" and every unit looks inactive. php-fpm runs as caddy,
+# so that is exactly what avian/api/birdnet-status.php sees, and its Services
+# panel would report a healthy system as entirely dead.
+#
+# systemd has no equivalent problem, because it serves state over D-Bus to any
+# user. Re-exec through sudo to get the same effect. No recursion guard is
+# needed: the escalated process is root and skips this branch.
+#
+# This grants nothing new. Upstream's own configure_caddy_php() already installs
+# /etc/sudoers.d/010_caddy-nopasswd with "caddy ALL=(ALL) NOPASSWD: ALL"; if
+# that rule is ever tightened, sudo -n simply fails and we carry on
+# unprivileged, reporting inactive rather than breaking.
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  exec sudo -n /usr/local/sbin/systemctl "$@"
+fi
+
+# s6-svstat and s6-svc live in /command. The web UI reaches this shim through
+# `sudo /bin/systemctl ...`, and sudo replaces PATH with its own secure_path,
+# which does not include /command however the image sets ENV PATH. Without this
+# line every restart from the UI fails with "s6-svc: command not found".
+case ":$PATH:" in
+  *:/command:*) ;;
+  *) PATH="/command:$PATH" ;;
+esac
+
 # Overridable so the shim can be exercised against a fixture tree in CI.
 # Nothing in the image sets these.
 SCANDIR=${AV_SCANDIR:-/run/service}

@@ -203,6 +203,14 @@ reboots if you have more than one audio device; pin it by name instead, e.g.
 Something on the host already holds the mic. The container and the host cannot
 both capture from it.
 
+**`birdnet_analysis` logs `no more notifications: restarting...` every minute.**
+
+Expected when no audio is arriving. The analyser watches `StreamData` and
+restarts itself if nothing lands within `RECORDING_LENGTH * 2 + 30` seconds, on
+the assumption the recorder has died. It is upstream's watchdog, not a container
+problem: with a working mic a file arrives every 15s and it never fires. If you
+see this, fix the audio source and it stops.
+
 **Analysis service restarting in a loop.** Almost always memory. Raise
 `MEM_LIMIT` in `.env`, or check:
 

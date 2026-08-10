@@ -1,6 +1,16 @@
 #!/command/with-contenv bash
-# Starts as root so icecast can honour the <changeowner> block in
-# /etc/icecast2/icecast.xml and drop to the icecast2 user itself. The config is
-# rewritten on every boot by config_icecast() in scripts/install_lib.sh, called
-# from avian-container-init, so ICE_PWD changes take effect on restart.
-exec /usr/bin/icecast2 -c /etc/icecast2/icecast.xml
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
+# Runs as the icecast2 user, matching Debian's own unit (User=icecast2).
+#
+# It cannot run as root: icecast refuses with "You should not run icecast2 as
+# root / Use the changeowner directive in the config file", and Debian ships
+# <changeowner> commented out, so dropping privileges here rather than editing
+# the XML keeps config_icecast() in scripts/install_lib.sh shared with the
+# bare-metal install.
+#
+# That config is rewritten on every boot by avian-container-init, so an ICE_PWD
+# change takes effect on restart.
+exec s6-setuidgid icecast2 /usr/bin/icecast2 -c /etc/icecast2/icecast.xml

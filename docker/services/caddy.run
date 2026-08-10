@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # The Caddyfile is regenerated on every boot by avian-container-init (via
 # scripts/update_caddyfile.sh) so BIRDNETPI_URL and CADDY_PWD changes made in
 # the web UI take effect on restart.

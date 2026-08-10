@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # Mirrors birdnet_stats.service from install_services.sh. Caddy reverse-proxies
 # /stats to this, hence the matching --server.baseUrlPath.
 exec s6-setuidgid birdnet \

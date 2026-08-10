@@ -50,6 +50,16 @@ while IFS= read -r line; do
     exit 1
   fi
 
+  # An s6 pipeline only carries stdout. A run script that forgets to fold stderr
+  # in still works, but its log file stays empty forever and the admin overlay's
+  # log view for that unit shows nothing - a failure that is invisible until
+  # someone actually goes looking for a log. Catch it at build time instead.
+  if ! grep -q '^exec 2>&1$' "$run_src"; then
+    echo "build-s6-tree: $run_src is missing 'exec 2>&1'; its stderr would never" >&2
+    echo "               reach /var/log/birdnet/$name and the log view would be empty" >&2
+    exit 1
+  fi
+
   mkdir -p "$RC/$name/dependencies.d"
   echo longrun > "$RC/$name/type"
   install -m 0755 "$run_src" "$RC/$name/run"

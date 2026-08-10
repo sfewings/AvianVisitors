@@ -1,4 +1,8 @@
 #!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
 # Mirrors custom_recording.service. Defined but not started at boot (see
 # SERVICES), matching install_services.sh, which installs the unit without
 # enabling it. Start it from the stock UI's service controls if you use it.
