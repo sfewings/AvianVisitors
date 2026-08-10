@@ -6,3 +6,8 @@
 Pillow>=10.0
 rembg>=2.0.76
 onnxruntime>=1.16
+# rembg -> pymatting -> numba, and numba trails NumPy's latest release by a
+# few months. Without this cap the resolver satisfies the newest NumPy by
+# falling back to numba 0.53, which has no wheels and cannot build on
+# Python >=3.10. Raise the bound as numba catches up.
+numpy<2.4

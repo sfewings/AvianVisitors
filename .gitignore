@@ -26,6 +26,7 @@
 
 *.pyc
 __pycache__/
+.venv/
 *.flac
 .vscode
 model/labels.txt
