@@ -1,0 +1,6 @@
+#!/command/with-contenv bash
+# Mirrors birdnet_log.service from install_services.sh. Caddy proxies /log here.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet TERM=xterm-256color \
+  /usr/local/bin/gotty --address localhost -p 8080 --path log \
+    --title-format "BirdNET-Pi Log" birdnet_log.sh

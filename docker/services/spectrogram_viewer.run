@@ -1,0 +1,5 @@
+#!/command/with-contenv bash
+# Mirrors spectrogram_viewer.service from install_services.sh.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /usr/local/bin/spectrogram.sh

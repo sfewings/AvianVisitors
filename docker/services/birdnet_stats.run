@@ -1,0 +1,10 @@
+#!/command/with-contenv bash
+# Mirrors birdnet_stats.service from install_services.sh. Caddy reverse-proxies
+# /stats to this, hence the matching --server.baseUrlPath.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /home/birdnet/BirdNET-Pi/birdnet/bin/streamlit run \
+    /home/birdnet/BirdNET-Pi/scripts/plotly_streamlit.py \
+    --browser.gatherUsageStats false \
+    --server.address localhost \
+    --server.baseUrlPath "/stats"

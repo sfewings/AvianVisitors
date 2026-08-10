@@ -57,3 +57,9 @@ whitelist_species_list.txt
 avian/assets/references/
 # Superseded assets retained locally
 avian/assets/_legacy/
+
+# --- Docker deployment: local state, never committed ---
+# Bind-mounted birdnet.conf generated on first container start.
+/config/
+# Holds the deployment's own coordinates, passwords and API keys.
+.env

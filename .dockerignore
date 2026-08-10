@@ -1,0 +1,59 @@
+# Build context trimming. The repo carries a lot of weight that has no business
+# in a runtime image, and on a Pi every avoided megabyte is real time.
+
+.git
+.github
+.gitignore
+.flake8
+.vscode
+.idea
+.claude
+
+# Built by the venv-builder stage at the same absolute path; copying a host
+# venv in would shadow it with one built for the wrong arch and python.
+birdnet/
+
+# x86_64 gotty is 13MB of dead weight in an arm64 image. scripts/gotty
+# dispatches on uname -m and only ever reaches the aarch64 binary here.
+scripts/gotty-x86_64
+
+# The optional e-ink wall display. Separate device, separate installer
+# (frame/install.sh), no role in the server container.
+frame/
+
+# Docs and screenshots. Nothing served at runtime reads a markdown file; the
+# double-star is needed because a bare *.md would only match the context root.
+docs/
+**/*.md
+!version.md
+
+# Test suite and CI fixtures.
+tests/
+**/__pycache__/
+*.pyc
+
+# The illustration generation pipeline: a developer tool that calls the Gemini
+# and eBird APIs to regenerate avian/assets. The generated assets ship; the
+# generator does not.
+avian/scripts/
+avian/assets/references/
+avian/assets/_legacy/
+
+# Local runtime state from a bare-metal install that happens to share the
+# directory. These are seeded onto volumes by avian-container-init.
+birdnet.conf
+BirdDB.txt
+IdentifiedSoFar.txt*
+apprise.txt
+body.txt
+firstrun.ini
+HUMAN.txt
+*_species_list.txt
+scripts/*.db
+installation-*.txt
+
+# Docker build inputs are COPYed explicitly by path, so the directory itself
+# does not need to land in the image root.
+docker-compose.yml
+.env
+.env.example

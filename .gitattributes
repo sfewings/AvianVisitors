@@ -1,0 +1,36 @@
+# Everything here runs on Linux: on a Raspberry Pi for the bare-metal install,
+# or inside the container image. A CRLF checkout on a Windows working copy would
+# be copied verbatim into the Docker build context and every script would die
+# with "bad interpreter: /usr/bin/env bash^M". Pin the line endings so
+# core.autocrlf=true cannot rewrite them.
+
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.run   text eol=lf
+*.php   text eol=lf
+*.py    text eol=lf
+*.cron  text eol=lf
+*.conf  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+docker/services/SERVICES text eol=lf
+
+# Shims and helpers are extensionless executables.
+docker/shims/*  text eol=lf
+newinstaller.sh text eol=lf
+
+# Binaries and assets: never touch.
+*.png    binary
+*.webp   binary
+*.jpg    binary
+*.ico    binary
+*.tflite binary
+*.wav    binary
+*.mp3    binary
+*.flac   binary
+scripts/gotty-aarch64 binary
+scripts/gotty-x86_64  binary

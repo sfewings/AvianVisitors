@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# reboot shim for the AvianVisitors container.
+#
+# scripts/service_controls.php offers a "reboot" button (and appends
+# `&& sudo reboot` to the mount action). Rebooting the host from inside a
+# container is neither possible nor desirable, so the closest honest equivalent
+# is to bring the container down: with `restart: unless-stopped` in
+# docker-compose.yml, Docker brings it straight back, which is what the user
+# actually wanted.
+#
+# Also covers `shutdown` and `halt`, symlinked to this file.
+
+set -euo pipefail
+
+echo "reboot (AvianVisitors container shim): stopping the container." >&2
+echo "Docker's restart policy will bring it back up." >&2
+
+# Ask s6-overlay's supervision tree to shut down cleanly, giving each service
+# its normal stop path. Falls back to signalling PID 1 directly if the
+# s6 basedir is not where we expect it.
+if [ -x /run/s6/basedir/bin/halt ]; then
+  exec /run/s6/basedir/bin/halt
+fi
+
+kill -TERM 1

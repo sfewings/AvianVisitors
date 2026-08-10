@@ -54,6 +54,17 @@ Clones this fork, installs BirdNET-Pi, symlinks the AvianVisitors overlay into t
 
 Collage: `http://birdnet.local/`. Stock BirdNET-Pi UI: `http://birdnet.local/index.php`. The menu button in the top right opens an admin overlay with settings, system, log, and tool panels.
 
+### Or run it in Docker
+
+If the Pi already does other jobs, or you would rather upgrade with `docker compose pull` than a git pull, there is a container image instead:
+
+```bash
+cp .env.example .env   # set LATITUDE, LONGITUDE, TZ, REC_CARD
+docker compose up -d
+```
+
+Collage on `http://<host>:8080/`. arm64 only, and a USB mic needs a Linux host to pass `/dev/snd` through. Full walkthrough, including what you give up versus the bare-metal install, in [`docs/docker.md`](docs/docker.md).
+
 ---
 
 ## 3. (Optional) Restyle the illustrations

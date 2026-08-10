@@ -1,0 +1,31 @@
+# Supervised processes in the AvianVisitors container, one per line:
+#
+#   <name>:<enabled>
+#
+# <name> must match the unit name the web UI expects. avian/api/birdnet-status.php
+# has an ALLOWED_UNITS list and scripts/service_controls.php hardcodes unit names;
+# both go through the systemctl shim, which strips a trailing ".service" and
+# resolves any php*-fpm spelling onto whichever php*-fpm entry exists here.
+#
+# <enabled> = yes puts the service in the s6-rc "user" bundle so it starts with
+# the container. "no" still defines it (so the UI can see and start it) but
+# leaves it stopped at boot, mirroring how install_services.sh installs
+# custom_recording.service without enabling it.
+#
+# Each name needs a matching <name>.run in this directory. build-s6-tree.sh
+# turns these into /etc/s6-overlay/s6-rc.d entries with an s6-log logger
+# writing to /var/log/birdnet/<name>, which is what the journalctl shim reads.
+
+php8.2-fpm:yes
+caddy:yes
+icecast2:yes
+birdnet_recording:yes
+birdnet_analysis:yes
+chart_viewer:yes
+spectrogram_viewer:yes
+birdnet_stats:yes
+birdnet_log:yes
+web_terminal:yes
+livestream:yes
+cron:yes
+custom_recording:no

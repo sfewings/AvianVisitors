@@ -1,0 +1,5 @@
+#!/command/with-contenv bash
+# Mirrors chart_viewer.service from install_services.sh.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /home/birdnet/BirdNET-Pi/birdnet/bin/python3 /usr/local/bin/daily_plot.py --daemon --sleep 2

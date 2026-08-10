@@ -1,0 +1,6 @@
+#!/command/with-contenv bash
+# Mirrors livestream.service from install_services.sh. Pushes an MP3 of the
+# live mic into the local icecast2, which Caddy proxies at /stream.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /usr/local/bin/livestream.sh

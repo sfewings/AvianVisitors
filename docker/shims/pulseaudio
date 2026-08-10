@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# pulseaudio no-op shim for the AvianVisitors container.
+#
+# scripts/birdnet_recording.sh opens its non-RTSP branch with
+#   if ! pulseaudio --check; then pulseaudio --start; fi
+# because on a Pi the recommended REC_CARD is "default", which routes through
+# PulseAudio. A container has no session bus and no reason to run a sound
+# server: it gets the capture device directly via `devices: /dev/snd` and talks
+# to it through ALSA, so REC_CARD must name a real card (e.g. plughw:1,0).
+#
+# Without this shim every recording restart logs two "command not found" lines.
+# Exiting 0 on --check makes the script skip --start entirely.
+
+case "${1:-}" in
+  --check)
+    exit 0
+    ;;
+  --start)
+    echo "pulseaudio (container shim): not starting a sound server; using ALSA directly." >&2
+    exit 0
+    ;;
+  *)
+    echo "pulseaudio (container shim): '$*' ignored." >&2
+    exit 0
+    ;;
+esac

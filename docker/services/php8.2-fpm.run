@@ -1,0 +1,10 @@
+#!/command/with-contenv bash
+# Debian bookworm ships PHP 8.2. The unit name has to carry the version because
+# avian/api/birdnet-status.php probes php8.2-fpm / php8.3-fpm / php8.4-fpm by
+# name; the systemctl shim resolves whichever one exists.
+#
+# Starts as root so the master process can create /run/php/php8.2-fpm.sock and
+# fork workers as the caddy user, per the pool config that
+# configure_caddy_php() rewrites in scripts/install_lib.sh.
+mkdir -p /run/php
+exec /usr/sbin/php-fpm8.2 --nodaemonize --fpm-config /etc/php/8.2/fpm/php-fpm.conf

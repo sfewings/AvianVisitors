@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# SysV `service` shim for the AvianVisitors container.
+#
+# scripts/config.php calls `sudo service php*-fpm restart` after writing
+# settings. Translate the SysV argument order (service NAME VERB) into the
+# systemctl shim's order (systemctl VERB NAME).
+
+set -uo pipefail
+
+NAME="${1:-}"
+VERB="${2:-status}"
+
+[ -n "$NAME" ] || { echo "service (container shim): usage: service NAME VERB" >&2; exit 1; }
+
+# Absolute path rather than a PATH lookup: this is reached through sudo, whose
+# secure_path is not guaranteed to include /usr/local/sbin on every base image.
+exec /usr/local/sbin/systemctl "$VERB" "$NAME"

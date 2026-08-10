@@ -1,0 +1,106 @@
+# AvianVisitors as a container. See docs/docker.md for the full walkthrough.
+#
+#   cp .env.example .env     # then edit it
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Collage:            http://<host>:8080/
+# Stock BirdNET-Pi UI: http://<host>:8080/index.php
+
+services:
+  avianvisitors:
+    image: ghcr.io/twarner491/avianvisitors:latest
+    # To build locally instead of pulling, comment out `image:` above and
+    # uncomment this. arm64 only: see the header of docker/Dockerfile.
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile
+    container_name: avianvisitors
+    restart: unless-stopped
+
+    # Caddy is the only thing published. icecast (8000), gotty (8080, 8888) and
+    # streamlit (8501) bind to localhost inside the container and are reached
+    # through Caddy's reverse proxies.
+    ports:
+      - "8080:80"
+
+    environment:
+      # Anything set here is written into birdnet.conf on every start and wins
+      # over edits made in the web UI. Anything left unset stays owned by the
+      # UI. Set a value in one place or the other, not both.
+      TZ: ${TZ:-UTC}
+      SITE_NAME: ${SITE_NAME:-AvianVisitors}
+      LATITUDE: ${LATITUDE:?set LATITUDE in .env}
+      LONGITUDE: ${LONGITUDE:?set LONGITUDE in .env}
+
+      # Audio source. Leave RTSP_STREAM empty to use the USB mic passed through
+      # below; set it to an rtsp:// URL to use a network source instead, in
+      # which case the `devices` block becomes unnecessary.
+      REC_CARD: ${REC_CARD:-plughw:1,0}
+      RTSP_STREAM: ${RTSP_STREAM:-}
+      CHANNELS: ${CHANNELS:-2}
+
+      CONFIDENCE: ${CONFIDENCE:-0.7}
+      SENSITIVITY: ${SENSITIVITY:-1.25}
+      RECORDING_LENGTH: ${RECORDING_LENGTH:-15}
+
+      # Optional. CADDY_PWD turns on basic auth for /scripts, /stream,
+      # /terminal, /phpsysinfo and the file browser. Worth setting before you
+      # expose this beyond your LAN.
+      CADDY_PWD: ${CADDY_PWD:-}
+      BIRDNETPI_URL: ${BIRDNETPI_URL:-}
+      BIRDWEATHER_ID: ${BIRDWEATHER_ID:-}
+      DATABASE_LANG: ${DATABASE_LANG:-en}
+
+    # USB microphone passthrough. Linux hosts only: Docker Desktop on macOS and
+    # Windows has no /dev/snd to forward, so use RTSP_STREAM there instead.
+    # Find your card with:  arecord -l   (on the host)
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+
+    # Lets the System panel in the admin overlay enumerate USB audio devices.
+    # Read-only, and safe to drop if you would rather not expose the USB tree.
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb:ro
+
+      # birdnet.conf. A bind mount so you can open it in an editor on the host.
+      # The container runs as uid 1000; chown the directory to match if your
+      # host user differs.
+      - ./config:/config
+
+      # Detections database, species lists, notification templates. Small,
+      # and the thing you actually want in a backup.
+      - avian-data:/data
+
+      # Audio recordings, extractions and charts. This is the one that grows.
+      - avian-recordings:/home/birdnet/BirdSongs
+
+    # Raw 15-second captures are written here, analysed, then deleted. On bare
+    # metal install_helpers.sh mounts a tmpfs over this path to spare the SD
+    # card; the same idea, expressed in compose.
+    #
+    # Size it deliberately. The default (half of host RAM) will happily consume
+    # everything on a 512MB Pi Zero 2W. 200MB holds well over a minute of
+    # 48kHz stereo, which is more headroom than the analyser needs.
+    tmpfs:
+      - /home/birdnet/BirdSongs/StreamData:size=200m,mode=1777,uid=1000,gid=1000
+
+    # tflite inference is the memory high-water mark. Without a cap, a stuck
+    # analysis loop can OOM the whole Pi rather than just this container.
+    mem_limit: ${MEM_LIMIT:-1500m}
+
+    # sox and ffmpeg are happy to be killed and restarted; the supervisor and
+    # Docker's restart policy handle recovery.
+    stop_grace_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  avian-data:
+  avian-recordings:

@@ -1,0 +1,11 @@
+#!/command/with-contenv bash
+# The Caddyfile is regenerated on every boot by avian-container-init (via
+# scripts/update_caddyfile.sh) so BIRDNETPI_URL and CADDY_PWD changes made in
+# the web UI take effect on restart.
+#
+# Runs as the caddy user, matching bare metal: install_lib.sh adds caddy to the
+# birdnet group and php-fpm's pool runs as caddy too, so both can read
+# ${EXTRACTED}. HOME is needed for Caddy's data directory.
+exec s6-setuidgid caddy \
+  env HOME=/var/lib/caddy XDG_DATA_HOME=/var/lib XDG_CONFIG_HOME=/etc \
+  /usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile

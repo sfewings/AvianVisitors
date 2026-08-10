@@ -1,0 +1,5 @@
+#!/command/with-contenv bash
+# Mirrors birdnet_analysis.service from install_services.sh.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /home/birdnet/BirdNET-Pi/birdnet/bin/python3 /usr/local/bin/birdnet_analysis.py

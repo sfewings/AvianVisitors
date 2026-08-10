@@ -1,0 +1,7 @@
+#!/command/with-contenv bash
+# Mirrors custom_recording.service. Defined but not started at boot (see
+# SERVICES), matching install_services.sh, which installs the unit without
+# enabling it. Start it from the stock UI's service controls if you use it.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /usr/local/bin/custom_recording.sh

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# journalctl shim for the AvianVisitors container.
+#
+# There is no journal in the container. Each s6 service is paired with an
+# s6-log logger writing ISO-8601-stamped lines to /var/log/birdnet/<unit>/, so
+# `journalctl -u <unit> -n <N>` becomes a tail of that directory.
+#
+# Consumed by avian/api/birdnet-status.php (?action=logs and ?action=diag) and
+# by the stock UI's log view. Symlinked to /bin/journalctl because the sudoers
+# allowlist written by install_lib.sh pins that absolute path.
+
+set -uo pipefail
+
+# Overridable so the shim can be exercised against a fixture tree in CI.
+# Nothing in the image sets this.
+LOGROOT=${AV_LOGROOT:-/var/log/birdnet}
+
+UNIT=""
+LINES=100
+FOLLOW=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -u|--unit)       UNIT="$2"; shift ;;
+    --unit=*)        UNIT="${1#--unit=}" ;;
+    -u*)             UNIT="${1#-u}" ;;
+    -n|--lines)      LINES="$2"; shift ;;
+    --lines=*)       LINES="${1#--lines=}" ;;
+    -n*)             LINES="${1#-n}" ;;
+    -f|--follow)     FOLLOW=1 ;;
+    -e|--pager-end)  : ;;
+    -o|--output)     shift ;;   # we always emit short-iso-ish lines
+    --output=*)      : ;;
+    --no-pager|--no-hostname|-x|-r|--reverse) : ;;
+    *)               [ -z "$UNIT" ] && UNIT="$1" ;;
+  esac
+  shift
+done
+
+UNIT="${UNIT%.service}"
+[ -n "$UNIT" ] || { echo "journalctl (container shim): -u <unit> is required" >&2; exit 1; }
+
+# Reject anything that could escape the log root before touching the fs.
+case "$UNIT" in
+  */*|*..*) echo "journalctl (container shim): invalid unit name" >&2; exit 1 ;;
+esac
+
+DIR="$LOGROOT/$UNIT"
+if [ ! -d "$DIR" ]; then
+  echo "-- No entries --"
+  exit 0
+fi
+
+case "$LINES" in
+  ''|*[!0-9]*) LINES=100 ;;
+esac
+
+# s6-log keeps the live file as "current" and rotates older ones to
+# @<tai64n>.s / .u. Concatenate rotated files oldest-first, then current, so a
+# request for more lines than the live file holds still reaches back in time.
+collect() {
+  local f
+  for f in $(ls -1 "$DIR"/@*.[su] 2>/dev/null | sort); do
+    cat "$f"
+  done
+  [ -f "$DIR/current" ] && cat "$DIR/current"
+}
+
+if [ "$FOLLOW" -eq 1 ]; then
+  exec tail -n "$LINES" -F "$DIR/current"
+fi
+
+out=$(collect | tail -n "$LINES")
+if [ -z "$out" ]; then
+  echo "-- No entries --"
+else
+  printf '%s\n' "$out"
+fi

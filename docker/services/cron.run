@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Replaces the crontab lines install_services.sh appends to /etc/crontab:
+# cleanup.cron (disk_check, disk_species_clean, cleanup) and weekly_report.cron.
+#
+# automatic_update.cron is deliberately NOT installed here. On bare metal it
+# git-pulls the repo every Sunday; in a container the code lives in a read-only
+# image layer and updating means `docker compose pull`, so a self-updating
+# checkout would only desynchronise the image from what is running.
+#
+# -f foreground, -L 15 logs job start/end to stdout so the journalctl shim can
+# show them.
+exec /usr/sbin/cron -f -L 15

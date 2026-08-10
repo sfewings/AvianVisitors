@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+# Mirrors web_terminal.service from install_services.sh. Caddy proxies
+# /terminal here. Runs unprivileged, so the `su` below still demands the
+# account password: this is a login prompt, not an open shell.
+#
+# There is nothing in the container worth a shell for most deployments. If you
+# do not want it reachable at all, set custom_recording-style enabled:no for
+# web_terminal in docker/services/SERVICES, or put basic auth in front of
+# /terminal by setting CADDY_PWD.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet TERM=xterm-256color \
+  /usr/local/bin/gotty --address localhost -w -p 8888 --path terminal \
+    --title-format "BirdNET-Pi Terminal" \
+    bash -c 'read -p "Login: " username && [[ "$username" =~ ^[-_.a-z0-9]{1,30}$ ]] && su --pty -l $username'

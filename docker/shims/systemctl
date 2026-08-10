@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# systemctl shim for the AvianVisitors container.
+#
+# The web UI is built around systemd: scripts/service_controls.php and
+# avian/api/birdnet-status.php shell out to systemctl to show service state and
+# to restart units. Rather than rewrite that UI for Docker, this shim maps the
+# handful of subcommands they actually use onto s6-rc / s6-svc, so the same PHP
+# works on a Pi and in a container.
+#
+# It lives in /usr/local/sbin, which precedes /usr/bin on PATH, and is also
+# symlinked to /bin/systemctl because the sudoers allowlist written by
+# install_lib.sh pins the absolute path /bin/systemctl.
+#
+# Supported: is-active, is-enabled, is-failed, start, stop, restart, reload,
+# reload-or-restart, try-restart, status, show, cat, list-units, enable,
+# disable, daemon-reload, set-default. Anything else exits 0 with a notice, so
+# an unhandled upstream call can never wedge an install.
+
+set -uo pipefail
+
+# Overridable so the shim can be exercised against a fixture tree in CI.
+# Nothing in the image sets these.
+SCANDIR=${AV_SCANDIR:-/run/service}
+S6_RC_DIR=${AV_S6_RC_DIR:-/etc/s6-overlay/s6-rc.d}
+
+# --- argument parsing -------------------------------------------------------
+# systemd accepts flags anywhere; collect them and keep the positional args.
+QUIET=0
+VALUE_ONLY=0
+PROPERTY=""
+ARGS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --quiet|-q)      QUIET=1 ;;
+    --value)         VALUE_ONLY=1 ;;
+    -p|--property)   PROPERTY="$2"; shift ;;
+    -p*)             PROPERTY="${1#-p}" ;;
+    --property=*)    PROPERTY="${1#--property=}" ;;
+    --now|--no-pager|--no-legend|--no-block|--full|-l|--all|-a|--system|--user)
+                     : ;;
+    -*)              : ;;
+    *)               ARGS+=("$1") ;;
+  esac
+  shift
+done
+
+VERB="${ARGS[0]:-}"
+UNITS=("${ARGS[@]:1}")
+
+# birdnet.conf-driven callers pass "birdnet_analysis.service"; s6 knows it as
+# "birdnet_analysis".
+#
+# The php case: configure_caddy_php in scripts/install_lib.sh calls
+# `systemctl restart php\*-fpm.service`, passing a literal asterisk because on
+# bare metal the PHP version varies by Debian release. Resolve that spelling
+# against whatever php*-fpm this image ships.
+#
+# Concrete names are deliberately NOT resolved. birdnet-status.php probes
+# php8.2-fpm, php8.3-fpm and php8.4-fpm in turn and drops the ones systemd does
+# not know about; if all three resolved onto the same unit, the Services panel
+# would list one process three times.
+normalise() {
+  local u="${1%.service}" resolved
+  case "$u" in
+    *'*'*fpm)
+      for resolved in "$S6_RC_DIR"/php*-fpm; do
+        [ -d "$resolved" ] && { u=$(basename "$resolved"); break; }
+      done
+      ;;
+  esac
+  printf '%s' "$u"
+}
+
+# A unit "exists" if s6-rc has a source definition for it. Checked against the
+# source tree rather than the live scandir so a stopped service still reports
+# as existing, which is what birdnet-status.php's `systemctl cat` probe wants.
+unit_exists() { [ -d "$S6_RC_DIR/$1" ]; }
+
+# Every service is half of a producer/consumer pipeline with its logger, and it
+# is the *pipeline* name that goes into the s6-rc "user" bundle, not the service
+# name. Check for both so a plain oneshot would also be handled.
+unit_enabled() {
+  [ -f "$S6_RC_DIR/user/contents.d/$1" ] || [ -f "$S6_RC_DIR/user/contents.d/$1-pipeline" ]
+}
+
+svc_up() {
+  [ -d "$SCANDIR/$1" ] || return 1
+  [ "$(s6-svstat -o up "$SCANDIR/$1" 2>/dev/null)" = "true" ]
+}
+
+svc_since() {
+  local secs
+  secs=$(s6-svstat -o updownsince "$SCANDIR/$1" 2>/dev/null) || return 1
+  [ -n "$secs" ] || return 1
+  date -u -d "@$secs" '+%a %Y-%m-%d %H:%M:%S UTC' 2>/dev/null
+}
+
+case "$VERB" in
+
+  is-active)
+    rc=1
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      if svc_up "$u"; then
+        state=active; rc=0
+      elif unit_exists "$u"; then
+        state=inactive
+      else
+        # Match systemd: unknown units are "inactive" on stdout, non-zero rc.
+        state=inactive
+      fi
+      [ "$QUIET" -eq 1 ] || echo "$state"
+    done
+    exit $rc
+    ;;
+
+  is-failed)
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      svc_up "$u" && { [ "$QUIET" -eq 1 ] || echo active; } || { [ "$QUIET" -eq 1 ] || echo inactive; }
+    done
+    exit 1
+    ;;
+
+  is-enabled)
+    rc=1
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      if unit_enabled "$u"; then
+        state=enabled; rc=0
+      elif unit_exists "$u"; then
+        # Defined but not in the default bundle, e.g. custom_recording, which
+        # the bare-metal installer also installs without enabling.
+        state=disabled
+      else
+        state=not-found
+      fi
+      [ "$QUIET" -eq 1 ] || echo "$state"
+    done
+    exit $rc
+    ;;
+
+  start|stop|restart|reload|reload-or-restart|try-restart|try-reload-or-restart)
+    # No supervision tree means we are running during `docker build`, where
+    # configure_caddy_php() in scripts/install_lib.sh calls
+    # `systemctl restart php*-fpm`. There is nothing running to restart, and
+    # failing here would abort the image build.
+    if [ ! -d "$SCANDIR" ]; then
+      echo "systemctl (container shim): supervisor not running, '$VERB' is a no-op" >&2
+      exit 0
+    fi
+    rc=0
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      if ! unit_exists "$u"; then
+        echo "Failed to $VERB $u: Unit $u not found." >&2
+        rc=1
+        continue
+      fi
+      case "$VERB" in
+        start)                    s6-svc -u "$SCANDIR/$u" || rc=1 ;;
+        stop)                     s6-svc -d "$SCANDIR/$u" || rc=1 ;;
+        # -r restarts; -w/-T wait for the service to come back up so callers
+        # like restart_services.sh see a settled state, capped at 10s so a
+        # service stuck in a crash loop cannot hang the web request.
+        restart|try-restart)      s6-svc -r -wu -T 10000 "$SCANDIR/$u" || rc=1 ;;
+        # s6 has no reload signal by default; a restart is the honest mapping.
+        reload|reload-or-restart|try-reload-or-restart)
+                                  s6-svc -r -wu -T 10000 "$SCANDIR/$u" || rc=1 ;;
+      esac
+    done
+    exit $rc
+    ;;
+
+  status)
+    rc=3
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      if ! unit_exists "$u"; then
+        echo "Unit $u could not be found."
+        continue
+      fi
+      since=$(svc_since "$u")
+      if svc_up "$u"; then
+        # service_controls.php greps this output for "Active", so the shape of
+        # this line matters more than the rest.
+        echo "* $u - $u"
+        echo "     Active: active (running) since ${since:-unknown}"
+        rc=0
+      else
+        echo "* $u - $u"
+        echo "     Active: inactive (dead) since ${since:-unknown}"
+      fi
+    done
+    exit $rc
+    ;;
+
+  show)
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      case "$PROPERTY" in
+        ActiveEnterTimestamp)
+          val=$(svc_since "$u") ;;
+        ActiveState)
+          val=$(svc_up "$u" && echo active || echo inactive) ;;
+        UnitFileState)
+          val=$(unit_enabled "$u" && echo enabled || echo disabled) ;;
+        *)
+          val="" ;;
+      esac
+      if [ "$VALUE_ONLY" -eq 1 ]; then
+        echo "$val"
+      else
+        echo "${PROPERTY:-Property}=$val"
+      fi
+    done
+    exit 0
+    ;;
+
+  cat)
+    # Only used as an existence probe (`systemctl cat X >/dev/null && echo Y`).
+    rc=0
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      if unit_exists "$u"; then
+        echo "# /etc/s6-overlay/s6-rc.d/$u/run"
+        cat "$S6_RC_DIR/$u/run" 2>/dev/null
+      else
+        echo "No files found for $u." >&2
+        rc=1
+      fi
+    done
+    exit $rc
+    ;;
+
+  list-units|list-unit-files)
+    for d in "$S6_RC_DIR"/*/; do
+      u=$(basename "$d")
+      case "$u" in user|*-log|init-*) continue ;; esac
+      [ -f "$d/type" ] || continue
+      printf '%-24s %s\n' "$u" "$(svc_up "$u" && echo active || echo inactive)"
+    done
+    exit 0
+    ;;
+
+  # The container's service set is fixed at build time: s6-rc reads its bundle
+  # from a read-only image layer, so enable/disable have nothing to write to.
+  # No-op rather than fail, so install_lib.sh and the stock UI's Enable/Disable
+  # buttons do not error out. --now is handled by the flag parser above, so
+  # `enable --now X` still needs to actually start X.
+  enable)
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      unit_exists "$u" && s6-svc -u "$SCANDIR/$u" 2>/dev/null
+    done
+    exit 0
+    ;;
+
+  disable)
+    for u in "${UNITS[@]}"; do
+      u=$(normalise "$u")
+      unit_exists "$u" && s6-svc -d "$SCANDIR/$u" 2>/dev/null
+    done
+    exit 0
+    ;;
+
+  daemon-reload|daemon-reexec|set-default|preset|mask|unmask)
+    exit 0
+    ;;
+
+  '')
+    echo "systemctl (AvianVisitors container shim): no verb given" >&2
+    exit 1
+    ;;
+
+  *)
+    echo "systemctl (AvianVisitors container shim): '$VERB' is not implemented; ignoring" >&2
+    exit 0
+    ;;
+esac

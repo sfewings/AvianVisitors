@@ -1,0 +1,6 @@
+#!/command/with-contenv bash
+# Mirrors birdnet_recording.service from install_services.sh.
+# Reads the USB mic via ALSA, or ffmpeg-pulls RTSP when RTSP_STREAM is set.
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet \
+  /usr/local/bin/birdnet_recording.sh

@@ -1,0 +1,6 @@
+#!/command/with-contenv bash
+# Starts as root so icecast can honour the <changeowner> block in
+# /etc/icecast2/icecast.xml and drop to the icecast2 user itself. The config is
+# rewritten on every boot by config_icecast() in scripts/install_lib.sh, called
+# from avian-container-init, so ICE_PWD changes take effect on restart.
+exec /usr/bin/icecast2 -c /etc/icecast2/icecast.xml

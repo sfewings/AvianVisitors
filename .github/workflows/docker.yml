@@ -1,0 +1,127 @@
+name: Docker image
+
+on:
+  push:
+    branches: [ "avian-visitors" ]
+    tags: [ "v*" ]
+    paths:
+      - 'docker/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker-compose.yml'
+      - 'requirements.txt'
+      - 'scripts/**'
+      - 'avian/**'
+      - 'homepage/**'
+      - 'templates/**'
+      - 'model/**'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    branches: [ "avian-visitors" ]
+    paths:
+      - 'docker/**'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Cheap gate: catches shell mistakes in the shims and init in seconds, so a
+  # 40-minute emulated arm64 build is never spent on a typo.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          for f in docker/avian-container-init.sh \
+                   docker/build-s6-tree.sh \
+                   docker/shims/* \
+                   docker/services/*.run \
+                   scripts/install_lib.sh \
+                   scripts/install_services.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: Shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          scandir: './docker'
+          # The .run scripts have execline-style shebangs that shellcheck
+          # cannot resolve; they are checked with bash -n above instead.
+          ignore_paths: docker/services
+
+      - name: Every service in SERVICES has a run script
+        run: |
+          rc=0
+          while IFS= read -r line; do
+            case "$line" in ''|\#*) continue ;; esac
+            name=${line%%:*}
+            if [ ! -f "docker/services/$name.run" ]; then
+              echo "::error::no run script for '$name'"
+              rc=1
+            fi
+          done < docker/services/SERVICES
+          exit $rc
+
+      - name: Validate compose file
+        run: docker compose -f docker-compose.yml config --quiet
+        env:
+          LATITUDE: "0.0"
+          LONGITUDE: "0.0"
+
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64-only image built on an x86 runner, so QEMU is not optional.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'avian-visitors') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/arm64
+          # PRs build to verify the Dockerfile still works, but publish nothing.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
