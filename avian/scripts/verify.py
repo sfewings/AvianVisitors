@@ -65,7 +65,7 @@ def slugify(sci: str) -> str:
 def load_labels(path: Path) -> dict[str, tuple[str, str]]:
     """Parse a Sci|Com label file into {slug: (sci, com)}."""
     out = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "|" not in line:
             continue
@@ -174,7 +174,7 @@ def main() -> int:
     else:
         pngs = sorted(args.dir.glob("*.png"))
     if not args.out.exists():
-        args.out.write_text(CSV_HEADER)
+        args.out.write_text(CSV_HEADER, encoding="utf-8", newline="\n")
 
     print(f"verifying {len(pngs)} illustrations against {len(labels)} labels\n")
     mismatches = 0
@@ -211,7 +211,7 @@ def main() -> int:
         if v.get("diagnostic_features_missing"): flags.append(f"missing: {v['diagnostic_features_missing']}")
         if flags:
             print(f"         [warn] {'; '.join(flags)}")
-        with args.out.open("a") as f:
+        with args.out.open("a", encoding="utf-8", newline="\n") as f:
             f.write(csv_row(slug, pose, sci, v))
 
     print(f"\ndone. {mismatches} mismatch(es). results -> {args.out}")

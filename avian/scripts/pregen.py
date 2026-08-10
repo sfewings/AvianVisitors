@@ -246,7 +246,12 @@ def load_prompt(path: Path) -> str:
     """Return everything after the `## Prompt` heading, stripped to the
     next `##` heading (so doc preamble or trailing sections don't bleed
     into the API call)."""
-    text = path.read_text()
+    # encoding is explicit throughout this file: read_text() defaults to the
+    # locale encoding, which is cp1252 on a stock Windows install, and the
+    # prompt template, species notes and labels all contain UTF-8 (kachō-e,
+    # "Rüppell's Robin-Chat"). Without it the pipeline is Linux-only and dies
+    # with "'charmap' codec can't decode byte 0x8d".
+    text = path.read_text(encoding="utf-8")
     m = re.search(r"##\s*Prompt\s*\n(.+?)(?=\n##\s|\Z)", text, flags=re.DOTALL)
     return (m.group(1) if m else text).strip()
 
@@ -302,7 +307,17 @@ def fetch_wikipedia_thumb(sci: str, com: str) -> tuple[bytes, str] | None:
         # Prefer originalimage (higher res) over thumbnail.
         for k in ("originalimage", "thumbnail"):
             src = (meta.get(k) or {}).get("source")
-            if not src or not src.lower().endswith((".jpg", ".jpeg", ".png")):
+            if not src:
+                continue
+            # Test the extension against the URL *path*, not the whole URL.
+            # Wikimedia appends tracking parameters to these sources, e.g.
+            #   .../330px-Inland_Thornbill_%28...%29.jpg?utm_source=en.wikipedia.org
+            #     &utm_campaign=api&utm_content=thumbnail
+            # so matching on the full string rejects every image and every
+            # species silently generates with no reference photo at all - which
+            # the --no-refs help text rightly calls "lower-quality output".
+            if not urllib.parse.urlsplit(src).path.lower().endswith(
+                    (".jpg", ".jpeg", ".png")):
                 continue
             try:
                 req2 = urllib.request.Request(src, headers={"User-Agent": USER_AGENT})
@@ -358,7 +373,7 @@ def load_species_notes(notes_path: Path) -> dict[str, str]:
     species. Returns {} if the notes file doesn't exist."""
     if not notes_path.exists():
         return {}
-    raw = json.loads(notes_path.read_text())
+    raw = json.loads(notes_path.read_text(encoding="utf-8"))
     return {k: v for k, v in raw.items()
             if not k.startswith("_") and isinstance(v, str)}
 
@@ -577,7 +592,8 @@ def main() -> int:
 
     # Build species list
     if args.labels:
-        species, skipped = parse_species_list(args.labels.read_text().splitlines())
+        species, skipped = parse_species_list(
+            args.labels.read_text(encoding="utf-8").splitlines())
     elif args.stdin:
         species, skipped = parse_species_list(sys.stdin.read().splitlines())
     else:

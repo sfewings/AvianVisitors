@@ -106,7 +106,7 @@ def main() -> int:
     masks_path = args.frontend / "masks.json"
 
     if args.check:
-        cur = json.loads(dims_path.read_text()) if dims_path.exists() else {}
+        cur = json.loads(dims_path.read_text(encoding="utf-8")) if dims_path.exists() else {}
         added = sorted(set(dims) - set(cur))
         removed = sorted(set(cur) - set(dims))
         print(f"dims.json currently has {len(cur)} entries; "
@@ -117,8 +117,12 @@ def main() -> int:
             print("  gone:", ", ".join(removed[:8]) + (" ..." if len(removed) > 8 else ""))
         return 0
 
-    dims_path.write_text(dump_perkey(dims))
-    masks_path.write_text(dump_perkey(masks))
+    # newline="\n" as well as an explicit encoding: write_text translates \n to
+    # os.linesep, so a Windows run would emit CRLF and every regenerated
+    # dims.json/masks.json would show up as a whole-file diff against a
+    # Linux-generated one. The browser would not care; git and review would.
+    dims_path.write_text(dump_perkey(dims), encoding="utf-8", newline="\n")
+    masks_path.write_text(dump_perkey(masks), encoding="utf-8", newline="\n")
     print(f"wrote {dims_path} + {masks_path} ({len(dims)} entries each)\n"
           f"remember to bump SKETCH_VERSION + IMG_VERSION in apt.js if pixels changed")
     return 0
