@@ -33,11 +33,20 @@ tests/
 *.pyc
 
 # The illustration generation pipeline: a developer tool that calls the Gemini
-# and eBird APIs to regenerate avian/assets. The generated assets ship; the
-# generator does not.
+# and eBird APIs to regenerate avian/assets.
 avian/scripts/
-avian/assets/references/
-avian/assets/_legacy/
+
+# The assets themselves: 491MB of illustrations, cutouts and sketches, bind
+# mounted read-only at runtime instead (see docker-compose.yml). Keeping them
+# out of the image means a rebuild does not re-copy half a gigabyte, and a
+# regenerated regional set from pregen.py appears on restart with no rebuild
+# at all.
+#
+# The container will refuse to start without this mount, by design: without
+# illustrations the collage has nothing to draw. avian-container-init checks for
+# it and says so plainly rather than letting the failure surface as a confusing
+# "Missing webroot source" from link_webroot.sh.
+avian/assets/
 
 # Local runtime state from a bare-metal install that happens to share the
 # directory. These are seeded onto volumes by avian-container-init.

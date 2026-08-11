@@ -276,6 +276,49 @@ check_audio() {
 }
 
 # ---------------------------------------------------------------------------
+# 5b. Illustration assets
+# ---------------------------------------------------------------------------
+# avian/assets is ~491MB and is excluded from the image (.dockerignore); it
+# arrives as a read-only bind mount instead. Checked here so a missing mount
+# produces one actionable message, rather than surfacing later as
+# "Missing webroot source: .../avian/assets/favicon.png" from link_webroot.sh,
+# which is what create_necessary_dirs would otherwise abort on.
+#
+# Fatal rather than a warning: without illustrations the collage has nothing to
+# draw, so a container that "started fine" would be more confusing than one
+# that says why it did not.
+check_assets() {
+  local dir="$my_dir/avian/assets"
+
+  if [ ! -d "$dir" ] || [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+    log "FATAL: $dir is missing or empty."
+    log ""
+    log "  The illustration assets are not in the image. Mount them:"
+    log ""
+    log "    volumes:"
+    log "      - ./avian/assets:/home/birdnet/BirdNET-Pi/avian/assets:ro"
+    log ""
+    log "  docker-compose.yml in this repo already does this. If you are"
+    log "  running docker directly, add the -v yourself, or set ASSETS_DIR"
+    log "  to point at a different set of illustrations."
+    die "illustration assets not mounted"
+  fi
+
+  # favicon.png specifically, because link_webroot.sh treats it as mandatory.
+  if [ ! -f "$dir/favicon.png" ]; then
+    die "$dir is mounted but has no favicon.png; is it the right directory?"
+  fi
+
+  local n
+  n=$(ls -1 "$dir/illustrations" 2>/dev/null | wc -l)
+  log "assets: $n illustrations, mounted $([ -w "$dir" ] && echo read-write || echo read-only)"
+  if [ "$n" -eq 0 ]; then
+    log "assets: WARNING no illustrations found; the collage will fall back to"
+    log "        photo cutouts, and to nothing at all where those are missing."
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 6. Directories, database, web root, services config
 # ---------------------------------------------------------------------------
 # These run on every boot rather than at build time because they all write into
@@ -344,10 +387,17 @@ setup_runtime() {
   # thousands of extractions and walking it would add minutes to every restart.
   # Delete this marker to force a re-run if you ever restore a backup taken
   # under a different uid.
+  #
+  # Scoped to ${RECS_DIR}, rather than the bare-metal installer's fix_permissions
+  # and chown_things which also walk $my_dir. Two reasons: the checkout's
+  # ownership and modes are already set at build time, and avian/assets inside it
+  # is a read-only bind mount, so recursing over it would emit a
+  # "Read-only file system" error per file - hundreds of lines of noise on every
+  # first boot, for work that is not needed.
   if [ ! -f "$DATA_DIR/.permissions-done" ]; then
-    log "first boot: fixing ownership and permissions (this can take a minute)"
-    fix_permissions
-    chown_things
+    log "first boot: fixing ownership and permissions under $RECS_DIR"
+    chown -R birdnet:birdnet "$RECS_DIR"
+    chmod -R g+rw "$RECS_DIR"
     touch "$DATA_DIR/.permissions-done"
   else
     # Cheap every-boot equivalent: only the mount points themselves, which
@@ -414,6 +464,7 @@ main() {
   seed_config
   apply_env_overrides
   check_audio
+  check_assets
   setup_runtime
   start_optional_services
   log "init complete"

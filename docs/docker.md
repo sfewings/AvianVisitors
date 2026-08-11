@@ -84,6 +84,41 @@ docker run --privileged --rm tonistiigi/binfmt --install arm64
 | `/data` | `avian-data` | `birds.db`, `BirdDB.txt`, species lists, notification templates |
 | `/home/birdnet/BirdSongs` | `avian-recordings` | Recordings, extractions, charts. This is the one that grows. |
 | `/home/birdnet/BirdSongs/StreamData` | tmpfs | Raw 15s captures awaiting analysis. Deliberately not persisted. |
+| `…/avian/assets` | `${ASSETS_DIR}` bind mount, read-only | Illustrations, photo cutouts, sketches. **Required.** |
+
+### Illustration assets are not in the image
+
+`avian/assets` is about 491MB (420MB of illustrations, 62MB of cutouts, 11MB of
+sketches), so it is excluded from the build context and bind mounted read-only
+instead:
+
+```yaml
+    volumes:
+      - ${ASSETS_DIR:-./avian/assets}:/home/birdnet/BirdNET-Pi/avian/assets:ro
+```
+
+Two things this buys. A rebuild no longer re-copies half a gigabyte into a layer.
+And a regenerated set drops straight in: run
+[`pregen.py`](../avian/scripts/pregen.py) on any machine, point `ASSETS_DIR` at
+the result, restart, done. No rebuild.
+
+Read-only is safe because nothing served ever writes there.
+[`cutout.php`](../avian/api/cutout.php) reads the PNGs and writes only to the
+system temp directory.
+
+**The container refuses to start without this mount.** Deliberately: without
+illustrations the collage has nothing to draw, so a container that appeared to
+start normally would be more confusing than one that says why it did not. The
+check is in `avian-container-init` and names the volume line you need. Without
+it the failure would surface as `Missing webroot source: .../favicon.png` from
+[`link_webroot.sh`](../scripts/link_webroot.sh), which is a good deal less
+helpful.
+
+If you run `docker` directly rather than through compose, the `-v` is on you:
+
+```bash
+-v "$PWD/avian/assets:/home/birdnet/BirdNET-Pi/avian/assets:ro"
+```
 
 BirdNET-Pi keeps its mutable state *inside* its own checkout, and the paths are
 hardcoded across dozens of scripts and the PHP UI. Rather than patch every
