@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>your birds</title>
+<title>Shannstainable birds</title>
 <meta name="description" content="A live bird collage from your window.">
 <link rel="icon" type="image/png" href="./favicon.png">
 <link rel="apple-touch-icon" href="./favicon.png">
@@ -15,9 +15,12 @@
 <body class="av-local">
 <!-- Pill in the top-left slot, only visible on admin overlays
      (body.admin-on); CSS in styles.css hides it everywhere else.
-     href="/" returns to the collage view via a full reload, which is
-     fine for an off-hot-path control. -->
-<a class="return-to-atlas" id="returnToAtlas" href="/" aria-label="back to collage">
+     href="./" returns to the collage view via a full reload, which is
+     fine for an off-hot-path control. Relative rather than "/" so the
+     control still lands on the collage when the site is reverse-proxied
+     under a subpath (e.g. example.org/birds/); "/" would jump to the
+     parent site's root. Identical behaviour on a plain root deploy. -->
+<a class="return-to-atlas" id="returnToAtlas" href="./" aria-label="back to collage">
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <path d="M10 3 L4 8 L10 13"/>
   </svg>
@@ -49,7 +52,7 @@
 
 <main class="stage">
   <header class="static-head">
-    <button type="button" class="pre" id="aboutLink">your birds</button>
+    <button type="button" class="pre" id="aboutLink">Shannstainable birds</button>
     <h1 id="staticTitle">Heard Recently</h1>
   </header>
   <div class="views" id="views">
@@ -187,7 +190,7 @@
   <div class="modal-backdrop" data-close="1"></div>
   <div class="about-card" role="document">
     <button type="button" class="modal-close" data-close="1" aria-label="close">×</button>
-    <p class="about-eyebrow">your birds</p>
+    <p class="about-eyebrow">Shannstainable birds</p>
     <h2 id="aboutTitle">The birds outside your window</h2>
     <p class="about-body">A tiny microphone identifies every passing bird with Cornell's <a href="https://birdnet.cornell.edu/" target="_blank" rel="noopener">BirdNET</a>. Each species shows up as an illustration in the collage, sized by how often it's been heard.</p>
     <button type="button" class="about-explore" data-close="1">explore the birds →</button>

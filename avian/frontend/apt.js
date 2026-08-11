@@ -1588,7 +1588,12 @@
       // race a timeout because icecast can take 1-10s to warm up
       // depending on tunnel + bitrate.
       return new Promise(function (resolve, reject) {
-        liveEl = new Audio('/stream?t=' + Date.now());
+        // Relative, not '/stream': every other request in this file is
+        // './...' so the collage works when it is reverse-proxied under a
+        // subpath (e.g. example.org/birds/). A root-absolute '/stream' would
+        // escape the prefix and 404 at the parent site. Resolves identically
+        // to the old value on a plain root deploy.
+        liveEl = new Audio('./stream?t=' + Date.now());
         // No crossOrigin - the stream is same-origin via the worker
         // and crossOrigin='anonymous' would require CORS headers
         // icecast doesn't send.
