@@ -359,6 +359,54 @@ setup_runtime() {
 }
 
 # ---------------------------------------------------------------------------
+# 7. Optional services
+# ---------------------------------------------------------------------------
+# The MQTT bridge is defined in docker/services/SERVICES as "no", so s6-rc knows
+# about it and puts a servicedir in the scandir but does not start it at boot.
+# Starting it here, only when a broker is configured, keeps
+# `systemctl is-active avian_mqtt` truthful: inactive means genuinely not
+# running, rather than a process idling against a broker that was never set.
+#
+# Deliberately not driven by birdnet.conf. The bridge is a container-level
+# integration, not a BirdNET-Pi setting, and putting it in the conf would leak
+# broker credentials into the file the web UI displays.
+start_optional_services() {
+  if [ -z "${MQTT_BROKER:-}" ]; then
+    log "MQTT bridge: MQTT_BROKER unset, leaving avian_mqtt stopped"
+    return 0
+  fi
+
+  if [ ! -d /run/service/avian_mqtt ]; then
+    log "MQTT bridge: WARNING avian_mqtt not found in the supervision tree"
+    return 0
+  fi
+
+  # The container-appropriate MQTT_PI_URL default lives in the run script, not
+  # here: this image sets S6_KEEP_ENV=1, which makes with-contenv a pass-through
+  # with no container_environment directory to write a late-bound variable into.
+  log "MQTT bridge: starting avian_mqtt (broker ${MQTT_BROKER})"
+
+  # Both halves, logger first, and with s6-svc rather than s6-rc.
+  #
+  # s6-svc because s6-rc cannot be used from here at all: init-avian is itself
+  # part of the boot transaction, which holds the s6-rc lock, so
+  # `s6-rc -u change avian_mqtt-pipeline` dies with
+  # "fatal: unable to take locks: Resource busy" and the bridge never starts.
+  #
+  # Both halves because each service is the producer of a producer/consumer pair
+  # with its s6-log logger. Starting only the producer leaves its stdout as a
+  # pipe with no reader: nothing reaches the log view, and once the pipe buffer
+  # fills the bridge blocks on write and silently stops publishing. The logger
+  # goes first so a reader is already attached.
+  #
+  # Expect one "poll error: Connection refused" in the log. init-avian runs
+  # before Caddy starts, so the bridge's first poll of localhost has nothing to
+  # talk to yet; it retries every MQTT_POLL_SECONDS and recovers by itself.
+  s6-svc -u /run/service/avian_mqtt-log || log "MQTT bridge: logger failed to start"
+  s6-svc -u /run/service/avian_mqtt     || log "MQTT bridge: failed to start"
+}
+
+# ---------------------------------------------------------------------------
 main() {
   log "starting container init"
   setup_timezone
@@ -367,6 +415,7 @@ main() {
   apply_env_overrides
   check_audio
   setup_runtime
+  start_optional_services
   log "init complete"
 }
 

@@ -136,6 +136,79 @@ the two. Update with `docker compose pull && docker compose up -d`.
 
 ---
 
+## Optional: the MQTT bridge
+
+[`avian/forwarding/mqtt-bridge.py`](../avian/forwarding/mqtt-bridge.py) polls the
+detections API and publishes each newly heard species to MQTT as JSON under
+`<MQTT_TOPIC_PREFIX>/<species-slug>`, for Home Assistant and similar. It ships
+in the image and `paho-mqtt` is already in the venv, so there is nothing to
+install.
+
+It runs **only if `MQTT_BROKER` is set.** Leave it blank and the service stays
+genuinely stopped rather than idling:
+
+```bash
+docker compose exec avianvisitors systemctl is-active avian_mqtt   # inactive
+```
+
+To enable it, in `.env`:
+
+```bash
+MQTT_BROKER=homeassistant.local
+MQTT_PORT=1883
+MQTT_USER=
+MQTT_PASSWORD=
+MQTT_TOPIC_PREFIX=birdnet
+MQTT_POLL_SECONDS=60
+```
+
+then `docker compose up -d`. Published payloads are the API's own species
+objects:
+
+```
+birdnet/cacatua-roseicapilla {"sci":"Cacatua roseicapilla","com":"Galah","n":1,
+  "best_conf":0.88,"last_seen":"2026-08-11 15:24:47","top_file":"galah.mp3",...}
+```
+
+Watch it with `docker compose exec avianvisitors journalctl -u avian_mqtt -n 50`.
+
+Unlike the settings in `.env` that feed `birdnet.conf`, these are **not** written
+to the config file. The bridge is a container-level integration rather than a
+BirdNET-Pi setting, and the broker password has no business in a file the web UI
+displays.
+
+Three things worth knowing:
+
+- **A restart re-publishes.** Dedup is in-memory, so anything still inside the
+  poll window is emitted again after a restart. Harmless for sensors, worth
+  knowing if you drive automations off it.
+- **One `poll error: Connection refused` at startup is expected.** The bridge is
+  started by `avian-container-init`, which runs before Caddy, so its first poll
+  has nothing to talk to. It retries and recovers by itself.
+- **`MQTT_PI_URL` defaults to Caddy on localhost** inside the container, rather
+  than the script's bare-metal `birdnet.local` default which does not resolve
+  there. Override it if you want the bridge to poll a different station.
+
+### Why it is wired the way it is
+
+Two constraints made this less obvious than it looks, both worth recording since
+they apply to any future optional service:
+
+`avian_mqtt` is listed as `no` in
+[`docker/services/SERVICES`](../docker/services/SERVICES), so s6-rc knows it and
+puts a servicedir in the scandir but does not start it at boot. The init then
+starts it on demand. That is what keeps `is-active` truthful in both states.
+
+It is started with **`s6-svc`, not `s6-rc`**, and **both halves of the pipeline
+are started, logger first**. `s6-rc` cannot be used from `init-avian` at all:
+the init is itself part of the boot transaction, which holds the s6-rc lock, so
+the call dies with `fatal: unable to take locks: Resource busy`. And starting
+only the producer leaves its stdout a pipe with no reader, so nothing reaches
+the log view and the bridge eventually blocks on write once the buffer fills and
+stops publishing with no error anywhere.
+
+---
+
 ## Behind a reverse proxy, at a subpath
 
 For publishing the collage on the internet through an existing nginx box, while

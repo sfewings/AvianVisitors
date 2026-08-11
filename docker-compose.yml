@@ -52,6 +52,18 @@ services:
       BIRDWEATHER_ID: ${BIRDWEATHER_ID:-}
       DATABASE_LANG: ${DATABASE_LANG:-en}
 
+      # Optional MQTT bridge (avian/forwarding/mqtt-bridge.py). The service only
+      # starts when MQTT_BROKER is non-empty; leave it blank and nothing runs.
+      # Unlike the settings above these are NOT written into birdnet.conf: the
+      # bridge is a container-level integration, and the broker password has no
+      # business in a file the web UI displays.
+      MQTT_BROKER: ${MQTT_BROKER:-}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-birdnet}
+      MQTT_POLL_SECONDS: ${MQTT_POLL_SECONDS:-60}
+
     # USB microphone passthrough. Linux hosts only: Docker Desktop on macOS and
     # Windows has no /dev/snd to forward, so use RTSP_STREAM there instead.
     # Find your card with:  arecord -l   (on the host)

@@ -159,22 +159,31 @@ RUN find /home/birdnet/BirdNET-Pi /tmp/services /usr/local/sbin /usr/local/bin \
     && sed -i 's/\r$//' /tmp/build-s6-tree.sh \
     && head -1 /home/birdnet/BirdNET-Pi/scripts/install_config.sh | od -c | head -2
 
-# --- normalise ownership and modes ------------------------------------------
+# --- normalise directory modes ----------------------------------------------
 # Do not trust the permissions the build context carried in. A Windows or
 # OneDrive checkout has no POSIX modes for BuildKit to preserve, and what it
 # synthesises is not always sane: scripts/ arrives as dr-xr-xr-x, with no owner
 # write bit, so the `sudo -u birdnet ln -fs ... $my_dir/scripts` calls in
-# create_necessary_dirs fail and the container refuses to boot. The sed pass
-# above also rewrites files as root.
+# create_necessary_dirs fail and the container refuses to boot.
 #
-# Group-writable because php-fpm runs as caddy, caddy is in the birdnet group,
-# and the web UI edits files in this tree. Same end state as the bare-metal
-# installer's `chmod -R g+rw $my_dir`.
-RUN chown -R birdnet:birdnet /home/birdnet/BirdNET-Pi \
-    && find /home/birdnet/BirdNET-Pi -type d -exec chmod 0775 {} + \
-    && find /home/birdnet/BirdNET-Pi -type f -exec chmod g+rw {} + \
-    && test -w /home/birdnet/BirdNET-Pi/scripts \
-    && su -s /bin/bash birdnet -c 'touch /home/birdnet/BirdNET-Pi/scripts/.probe && rm /home/birdnet/BirdNET-Pi/scripts/.probe'
+# DIRECTORIES ONLY, and no recursive chown. Both matter for image size: every
+# file touched by chmod or chown is copied up into this layer, so a
+# `chown -R` plus `chmod -R` over the tree duplicated the 659MB app COPY and the
+# 1.28GB venv into a 1.94GB layer of nothing but changed metadata. There are a
+# few hundred directories and they cost kilobytes.
+#
+# Dropping the recursive chown is safe because COPY --chown already placed the
+# whole tree as birdnet:birdnet; only the files the CRLF pass rewrote came out
+# root-owned, and they are re-chowned below. Dropping the file chmod is safe
+# because every mutable file is symlinked onto a volume by
+# avian-container-init, which sets ownership and mode there; the files that stay
+# in the image layer are code, models and assets, which are only ever read.
+RUN find /home/birdnet/BirdNET-Pi -type d -exec chmod 0775 {} + \
+    && find /home/birdnet/BirdNET-Pi \
+         \( -name '*.sh' -o -name 'gotty' -o -name 'bashrc' \) -type f -print0 \
+       | xargs -0 --no-run-if-empty chown birdnet:birdnet \
+    && su -s /bin/bash birdnet -c 'touch /home/birdnet/BirdNET-Pi/scripts/.probe && rm /home/birdnet/BirdNET-Pi/scripts/.probe' \
+    && echo "birdnet can write into the checkout: ok"
 
 # Created here, owned by birdnet, so a fresh named volume mounted over it
 # inherits that ownership from the image. Docker seeds an empty named volume

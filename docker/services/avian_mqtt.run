@@ -1,0 +1,33 @@
+#!/command/with-contenv bash
+# Merge stderr into stdout so the s6-log pipeline captures both. Most of these
+# programs report problems on stderr, and the admin overlay's log view only ever
+# sees what the logger wrote, so without this their log files stay empty.
+exec 2>&1
+# Optional MQTT bridge: polls the recent-detections endpoint and publishes each
+# new species under <MQTT_TOPIC_PREFIX>/<slug>. See avian/forwarding/README.md.
+#
+# Not in the boot bundle (SERVICES lists it as "no"), so it stays down unless
+# avian-container-init starts it, which it does only when MQTT_BROKER is set.
+# That keeps `systemctl is-active avian_mqtt` honest: inactive means genuinely
+# not running, rather than a process idling on an unconfigured broker.
+#
+# PYTHONUNBUFFERED because stdout here is a pipe to s6-log, and Python's block
+# buffering would otherwise hold log lines back for a long time - the bridge
+# prints roughly one line a minute, so the buffer would take an age to fill.
+#
+# paho-mqtt is already in the venv via requirements.txt, so there is nothing
+# extra to install.
+
+# The bridge's own default points at birdnet.local, which does not resolve
+# inside the container. Default it to Caddy on localhost instead; an explicit
+# MQTT_PI_URL from the compose environment still wins. Defaulted here rather
+# than injected by avian-container-init because this image sets S6_KEEP_ENV=1,
+# which makes with-contenv a pass-through: there is no container_environment
+# directory to write a late-bound variable into.
+: "${MQTT_PI_URL:=http://localhost/avian/api/birdnet-api.php?action=recent&hours=1}"
+export MQTT_PI_URL
+
+exec s6-setuidgid birdnet \
+  env HOME=/home/birdnet USER=birdnet PYTHONUNBUFFERED=1 \
+  /home/birdnet/BirdNET-Pi/birdnet/bin/python3 \
+    /home/birdnet/BirdNET-Pi/avian/forwarding/mqtt-bridge.py

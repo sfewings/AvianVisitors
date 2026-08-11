@@ -64,3 +64,5 @@ sudo systemctl enable --now avian-mqtt
 ```
 
 Polls `birdnet-api.php?action=recent&hours=1` every 60 seconds. Publishes new species under `birdnet/<slug>` as JSON. Dedup is in-memory; restarts re-emit recent detections.
+
+Every constant in the script can also be set from the environment (`MQTT_BROKER`, `MQTT_PORT`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TOPIC_PREFIX`, `MQTT_PI_URL`, `MQTT_POLL_SECONDS`), which is how the Docker install drives it. Environment wins over the in-file defaults. See [`docs/docker.md`](../../docs/docker.md) for the container setup.

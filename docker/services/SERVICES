@@ -29,3 +29,6 @@ web_terminal:yes
 livestream:yes
 cron:yes
 custom_recording:no
+# Optional MQTT bridge. Left out of the boot bundle so it reports inactive when
+# unconfigured; avian-container-init starts it when MQTT_BROKER is set.
+avian_mqtt:no
