@@ -136,6 +136,187 @@ the two. Update with `docker compose pull && docker compose up -d`.
 
 ---
 
+## Behind a reverse proxy, at a subpath
+
+For publishing the collage on the internet through an existing nginx box, while
+the BirdNET Pi itself stays on the LAN. The worked example serves
+`https://example.org/birds/` from a container on `192.168.1.133`, proxied by
+nginx on `192.168.1.131`.
+
+The collage is written with relative `./` URLs throughout, so this needs no
+response-body rewriting, no sub-filters, and no `--base-href` equivalent. Two
+absolute URLs used to break it and were made relative
+([`apt.js`](../avian/frontend/apt.js) `./stream`, and the "back to collage"
+control in [`index.html`](../avian/frontend/index.html)), so a plain
+prefix-stripping proxy is now sufficient.
+
+### Do not configure this in the Caddyfile
+
+`avian-container-init` runs
+[`update_caddyfile.sh`](../scripts/update_caddyfile.sh) on **every container
+boot**, which rewrites `/etc/caddy/Caddyfile` from scratch. Hand edits are
+silently destroyed on the next restart. All proxy configuration belongs in
+nginx.
+
+### Container side
+
+Two settings in `.env`:
+
+```bash
+# MUST stay empty. update_caddyfile.sh writes `http:// ${BIRDNETPI_URL} {`, so
+# setting it makes Caddy answer for that hostname only. nginx forwards
+# Host: example.org, which would then 404.
+BIRDNETPI_URL=
+
+# Also leave empty. It would put basic auth on /stream, which breaks the
+# collage's live-audio button for every visitor. The nginx deny rules below
+# protect the admin surface instead, without gating the public page.
+CADDY_PWD=
+```
+
+And publish on port 80 in `docker-compose.yml`, so `proxy_pass` needs no port:
+
+```yaml
+    ports:
+      - "80:80"        # instead of the default 8080:80
+```
+
+### nginx side
+
+The complete `/etc/nginx/sites-available/default`. Nothing needs adding to
+`/etc/nginx/nginx.conf`: the `http { }` block lives there and already
+`include`s this file, which is why this file contains only a `server` block.
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name example.org;
+
+    root /var/www/html;
+    index index.html index.nginx-debian.html;
+
+    # ---- whatever else this host already serves -------------------------
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # ---- AvianVisitors ---------------------------------------------------
+    # Order does not matter for correctness: nginx evaluates regex locations
+    # before prefix ones, so the deny and stream blocks win over /birds/.
+
+    # /birds without the trailing slash leaves the browser resolving every
+    # relative asset against /, so nothing loads. This redirect is essential,
+    # not cosmetic: `location /birds/` does not match a request for `/birds`.
+    location = /birds {
+        return 301 /birds/;
+    }
+
+    # Admin and remote-control surface, denied at the edge. None of these
+    # require authentication by default:
+    #   avian/api/config.php          rewrites birdnet.conf, restarts services
+    #   avian/api/birdnet-status.php  restarts services on POST
+    #   avian/api/cutout.php          shells out
+    #   /terminal                     gotty -w, a writable web shell
+    #   /scripts                      serves adminer.php, a full DB admin tool
+    #   /phpsysinfo, /Processed       host detail and raw recordings
+    #   /stats, /log                  stock UI's streamlit and gotty views
+    # Reach all of it on the LAN instead, at http://192.168.1.133/ directly.
+    #
+    # This is a denylist: a new API endpoint added later is public by default.
+    # Prefer an allowlist if the API surface grows.
+    location ~ ^/birds/(avian/api/(config|birdnet-status|cutout)\.php|terminal|scripts|phpsysinfo|Processed|log|stats)(/|$) {
+        return 404;
+    }
+
+    # Live audio. icecast returns an endless response, so buffering must be off
+    # or nginx accumulates it and the player never starts. Matched on the path,
+    # so the cache-busting ?t= query string is irrelevant here.
+    location = /birds/stream {
+        proxy_pass         http://192.168.1.133/stream;
+        proxy_set_header   Host $host;
+        proxy_buffering    off;
+        proxy_read_timeout 24h;
+    }
+
+    location /birds/ {
+        # The trailing slash on proxy_pass is what strips the /birds/ prefix.
+        # Without it nginx forwards /birds/... verbatim and Caddy 404s, because
+        # the web root has no "birds" directory. With it, the container is
+        # served as though at the root of its own host, and the collage's
+        # relative ./ URLs resolve correctly browser-side.
+        proxy_pass http://192.168.1.133/;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Empty Connection header enables upstream keepalive on HTTP/1.1.
+        # No $connection_upgrade map is needed: the collage is fetch/poll only,
+        # and the WebSocket consumers (/stats, /log, /terminal) are denied above.
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+
+        # Chart and spectrogram regeneration is slow on a Pi under analysis load.
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### If you later expose /stats or /log
+
+Those two are WebSocket apps and need the upgrade headers, which require a
+`map` in the `http` block. Do not edit `nginx.conf`: `conf.d/*.conf` is included
+*inside* `http`, so a drop-in works and survives package upgrades.
+
+```bash
+echo 'map $http_upgrade $connection_upgrade { default upgrade; "" close; }' \
+  | sudo tee /etc/nginx/conf.d/websocket-upgrade.conf
+```
+
+Then in the `/birds/` block replace `proxy_set_header Connection "";` with:
+
+```nginx
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+```
+
+### What ends up public
+
+Reachable from the internet: the collage, its illustrations and detection list,
+per-detection audio and spectrograms (served through `recording.php` and
+`spectrogram.php`, both of which reject `..` and exclude `/` from their
+filename regex), and the live stream.
+
+LAN-only: settings, service restarts, logs, the system panel, the stock
+BirdNET-Pi tools, the web terminal and the database admin page.
+
+`/birds/index.php` still loads the stock UI, and its Tools links point at the
+denied `/stats` and `/log`, so they 404 rather than degrade gracefully. Add
+`index\.php` to the deny regex to keep the stock UI off the internet entirely.
+
+### Checking it
+
+```bash
+curl -sI  https://example.org/birds          # expect 301 -> /birds/
+curl -s   https://example.org/birds/ | head -6   # expect the collage <title>
+curl -so /dev/null -w '%{http_code}\n' https://example.org/birds/avian/api/menu.php      # 200
+curl -so /dev/null -w '%{http_code}\n' https://example.org/birds/avian/api/config.php    # 404
+curl -so /dev/null -w '%{http_code}\n' https://example.org/birds/terminal                # 404
+```
+
+A blank page with 404s in the browser console for `styles.css` and `apt.js`
+almost always means the trailing-slash redirect is missing and you are on
+`/birds` rather than `/birds/`.
+
+---
+
 ## How systemd is replaced
 
 The web UI is built around systemd. [`scripts/service_controls.php`](../scripts/service_controls.php)
