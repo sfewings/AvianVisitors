@@ -65,6 +65,10 @@ docker compose up -d
 
 Collage on `http://<host>:8080/`. arm64 only, and a USB mic needs a Linux host to pass `/dev/snd` through. Full walkthrough, including what you give up versus the bare-metal install, in [`docs/docker.md`](docs/docker.md).
 
+**Clone the repo, don't just pull the image.** The 491MB of illustrations is deliberately not baked in: `docker-compose.yml` bind mounts `avian/assets` read-only, so the container needs the checkout beside it and will refuse to start without that mount. Point `ASSETS_DIR` at a different directory to use a set for your own region, which anyone outside North America will want to do, since the bundled 333 species are North American (see [step 3](#3-optional-restyle-the-illustrations)).
+
+If you are handed a set of illustrations on their own, they are not usable as-is. Run `cutout.py` to remove the cream ground, then `build_masks.py` to rebuild the silhouettes, per [`avian/scripts/README.md`](avian/scripts/README.md). Both steps are required, not cosmetic: the collage places birds by silhouette, and a species with no entry in `masks.json` is dropped from the view entirely even when its illustration is sitting right there. `build_masks.py` writes into `avian/frontend/`, which *is* in the image, so that step needs a `docker compose build` rather than just a restart.
+
 ---
 
 ## 3. (Optional) Restyle the illustrations

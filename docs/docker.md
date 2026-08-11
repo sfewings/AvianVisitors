@@ -98,9 +98,21 @@ instead:
 ```
 
 Two things this buys. A rebuild no longer re-copies half a gigabyte into a layer.
-And a regenerated set drops straight in: run
-[`pregen.py`](../avian/scripts/pregen.py) on any machine, point `ASSETS_DIR` at
-the result, restart, done. No rebuild.
+And a regenerated set drops in by pointing `ASSETS_DIR` at it and restarting.
+
+With one caveat that is easy to trip over: **the collage places birds by
+silhouette, and the silhouettes are not in the mount.**
+[`build_masks.py`](../avian/scripts/build_masks.py) writes `dims.json` and
+`masks.json` into `avian/frontend/`, which is still in the image. A species with
+no entry in `masks.json` is dropped from the collage entirely, illustration
+present or not: [`apt.js`](../avian/frontend/apt.js) does
+`if (!mask) return null` and filters it out.
+
+So swapping `ASSETS_DIR` for a set of new species shows you nothing new until you
+also run `cutout.py` and `build_masks.py` and rebuild the image. Restart alone is
+enough only for *restyled* versions of species already in `masks.json`, where the
+slugs are unchanged. Either mount `avian/frontend` too if you want to iterate
+without rebuilding, or accept a `docker compose build` as part of regenerating.
 
 Read-only is safe because nothing served ever writes there.
 [`cutout.php`](../avian/api/cutout.php) reads the PNGs and writes only to the
