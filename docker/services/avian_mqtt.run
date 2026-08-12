@@ -24,7 +24,7 @@ exec 2>&1
 # than injected by avian-container-init because this image sets S6_KEEP_ENV=1,
 # which makes with-contenv a pass-through: there is no container_environment
 # directory to write a late-bound variable into.
-: "${MQTT_PI_URL:=http://localhost/avian/api/birdnet-api.php?action=recent&hours=1}"
+: "${MQTT_PI_URL:=http://localhost/avian/api/birdnet-api.php?action=recent&hours=24}"
 export MQTT_PI_URL
 
 exec s6-setuidgid birdnet \
