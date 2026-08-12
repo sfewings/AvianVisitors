@@ -66,3 +66,12 @@ installation-*.txt
 docker-compose.yml
 .env
 .env.example
+
+# Runtime bind-mount targets. These live beside the compose file by default, so
+# without these lines the entire recordings tree, which grows without bound,
+# would be packed into the build context and shipped to the daemon on every
+# build. Override DATA_DIR / RECORDINGS_DIR to move them out of the repo
+# entirely if you prefer.
+config/
+data/
+recordings/

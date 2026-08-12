@@ -78,13 +78,73 @@ docker run --privileged --rm tonistiigi/binfmt --install arm64
 
 ## What lives where
 
-| Path | Volume | Contents |
+Everything is a host directory. No named volumes, so all container state is
+visible on the Pi and can be backed up, inspected and moved with ordinary tools.
+
+| Container path | Host path | Contents |
 |---|---|---|
-| `/config` | `./config` bind mount | `birdnet.conf`, the one file you may want to hand-edit |
-| `/data` | `avian-data` | `birds.db`, `BirdDB.txt`, species lists, notification templates |
-| `/home/birdnet/BirdSongs` | `avian-recordings` | Recordings, extractions, charts. This is the one that grows. |
+| `/config` | `./config` | `birdnet.conf`, the one file you may want to hand-edit |
+| `/data` | `${DATA_DIR:-./data}` | `birds.db`, `BirdDB.txt`, species lists, notification templates. Small; back this up. |
+| `/home/birdnet/BirdSongs` | `${RECORDINGS_DIR:-./recordings}` | Recordings, extractions, charts. Grows without bound. |
 | `/home/birdnet/BirdSongs/StreamData` | tmpfs | Raw 15s captures awaiting analysis. Deliberately not persisted. |
-| `…/avian/assets` | `${ASSETS_DIR}` bind mount, read-only | Illustrations, photo cutouts, sketches. **Required.** |
+| `…/avian/assets` | `${ASSETS_DIR:-./avian/assets}`, read-only | Illustrations, photo cutouts, sketches. **Required.** |
+
+Point `RECORDINGS_DIR` at whichever disk has room; on a Pi with a small SD card
+an external drive is worth using, since this is the one that grows.
+
+Two consequences of using host paths rather than named volumes, both handled:
+
+*Ownership.* A fresh named volume inherits ownership from the image; a bind mount
+arrives with whatever the host has, usually root. `ensure_data_roots` in
+`avian-container-init` takes ownership of each mount point at startup, and the
+first boot additionally walks the recordings tree.
+
+*Build context.* The defaults sit beside `docker-compose.yml`, so `.dockerignore`
+excludes `config/`, `data/` and `recordings/`. Without that the whole recordings
+tree would be packed up and sent to the Docker daemon on every build.
+
+### Migrating from the old named volumes
+
+Earlier versions used named volumes. Switching the compose file alone silently
+starts from an empty database and leaves the old data orphaned, so copy it across
+first:
+
+```bash
+docker compose down
+mkdir -p data recordings
+
+# The project name prefixes the volume names; confirm yours with `docker volume ls`.
+for v in data recordings; do
+  docker run --rm \
+    -v "avianvisitors_avian-${v}:/from" \
+    -v "$PWD/${v}:/to" \
+    debian:bookworm-slim \
+    sh -c 'cp -a /from/. /to/'
+done
+
+# Let the container redo its ownership pass over the copied files.
+rm -f data/.permissions-done
+
+docker compose up -d
+```
+
+Then confirm the detection count survived before deleting anything:
+
+```bash
+docker compose exec avianvisitors sqlite3 /data/scripts/birds.db \
+  'select count(*) from detections;'
+```
+
+Only once that looks right:
+
+```bash
+docker volume rm avianvisitors_avian-data avianvisitors_avian-recordings
+```
+
+Removing `data/.permissions-done` matters: it is the marker that makes the
+recursive ownership and permission pass first-boot-only. Copied files land owned
+by root, and without deleting the marker that pass is skipped, leaving a
+recordings tree the container cannot write to.
 
 ### Illustration assets are not in the image
 
@@ -145,15 +205,18 @@ definition of user data.
 
 ### Backups
 
-`/config` and `/data` together are small and are what you actually need:
+`config/` and `data/` together are small and are what you actually need. Since
+both are plain directories, no Docker involvement is required:
 
 ```bash
-docker run --rm -v avian-data:/data -v "$PWD:/backup" debian:bookworm-slim \
-  tar czf /backup/avian-data.tgz -C /data .
-tar czf config.tgz config/
+tar czf avian-backup.tgz config data
 ```
 
-The recordings volume is optional and large. The in-app backup tool under
+Worth stopping the container first, or at least accepting that `birds.db` may be
+mid-write. `sqlite3 /data/scripts/birds.db ".backup /data/birds-backup.db"` gives
+a consistent copy without stopping anything.
+
+The recordings directory is optional and large. The in-app backup tool under
 Tools also still works and produces an archive the bare-metal install can
 restore.
 

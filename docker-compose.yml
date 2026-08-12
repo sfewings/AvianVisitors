@@ -114,10 +114,11 @@ services:
 
       # Detections database, species lists, notification templates. Small,
       # and the thing you actually want in a backup.
-      - avian-data:/data
+      - ${DATA_DIR:-./data}:/data
 
-      # Audio recordings, extractions and charts. This is the one that grows.
-      - avian-recordings:/home/birdnet/BirdSongs
+      # Audio recordings, extractions and charts. This is the one that grows;
+      # point RECORDINGS_DIR at whichever disk has room.
+      - ${RECORDINGS_DIR:-./recordings}:/home/birdnet/BirdSongs
 
     # Raw 15-second captures are written here, analysed, then deleted. On bare
     # metal install_helpers.sh mounts a tmpfs over this path to spare the SD
@@ -143,6 +144,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-volumes:
-  avian-data:
-  avian-recordings:
+# No named volumes: /config, /data and the recordings directory are all host
+# paths, so everything the container keeps is visible and backup-able with
+# ordinary tools. Bind mounts do not inherit ownership from the image the way a
+# fresh named volume does, so avian-container-init takes ownership of each mount
+# point at startup (ensure_data_roots).
