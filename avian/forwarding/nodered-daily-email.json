@@ -1,0 +1,265 @@
+[
+  {
+    "id": "bird_a_inject",
+    "type": "inject",
+    "z": "birds_daily",
+    "name": "Midnight bird report",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "00 00 * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "BirdReport",
+    "payload": "",
+    "payloadType": "date",
+    "x": 210,
+    "y": 120,
+    "wires": [
+      [
+        "bird_a_http"
+      ]
+    ]
+  },
+  {
+    "id": "bird_a_http",
+    "type": "http request",
+    "z": "birds_daily",
+    "name": "GET last 24h from BirdNET",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "http://192.168.1.133/avian/api/birdnet-api.php?action=recent&hours=24",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 470,
+    "y": 120,
+    "wires": [
+      [
+        "bird_a_map"
+      ]
+    ]
+  },
+  {
+    "id": "bird_a_map",
+    "type": "function",
+    "z": "birds_daily",
+    "name": "API -> msg.birds",
+    "func": "\n// The API returns the authoritative per-species counts straight from birds.db:\n//   { hours: 24, species: [ { sci, com, n, best_conf, last_seen, ... } ], ... }\n// n here is the real detection count for the window, unlike the MQTT payload's\n// n which only covers the bridge's 1-hour poll window.\nvar p = msg.payload || {};\nmsg.birds = p.species || [];\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 700,
+    "y": 120,
+    "wires": [
+      [
+        "bird_a_table"
+      ]
+    ]
+  },
+  {
+    "id": "bird_a_table",
+    "type": "function",
+    "z": "birds_daily",
+    "name": "Build HTML table",
+    "func": "\n// Build the end-of-day HTML table.\n//\n// Input: msg.birds = [ { sci, com, n, last_seen }, ... ]\n// Output: msg.payload = HTML fragment, ready to append to the daily email.\n\nvar SITE = \"https://shannstainable.fewings.org/birds/\";\nvar list = msg.birds || [];\n\nfunction esc(s) {\n    return String(s === null || s === undefined ? \"\" : s)\n        .replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\")\n        .replace(/>/g, \"&gt;\").replace(/\"/g, \"&quot;\");\n}\n\n// last_seen arrives as \"YYYY-MM-DD HH:MM:SS\" already in the station's local\n// time (sqlite stores Date and Time as the analyser wrote them), so no timezone\n// conversion is wanted here - only the clock time is interesting in a\n// single-day report.\nfunction hhmm(ls) {\n    var m = /\\d{4}-\\d{2}-\\d{2}[ T](\\d{2}:\\d{2})/.exec(String(ls || \"\"));\n    return m ? m[1] : esc(ls);\n}\n\n// Busiest first, then alphabetical, so the interesting rows are at the top.\nlist.sort(function (a, b) {\n    return (Number(b.n || 0) - Number(a.n || 0)) ||\n           String(a.com || \"\").localeCompare(String(b.com || \"\"));\n});\n\nvar out = '<h3 style=\"margin:0 0 6px\"><a href=\"' + SITE +\n          '\" style=\"text-decoration:none\">Shannstainable Birds</a></h3>';\n\nif (!list.length) {\n    out += \"<p>No birds detected.</p>\";\n    msg.payload = out;\n    return msg;\n}\n\n// Inline styles rather than a stylesheet: most mail clients strip <style>.\nvar TH = ' style=\"text-align:left;padding:3px 8px;border-bottom:1px solid #999\"';\nvar TD = ' style=\"padding:3px 8px;border-bottom:1px solid #eee\"';\nvar TDR = ' style=\"padding:3px 8px;border-bottom:1px solid #eee;text-align:right\"';\n\nout += '<table cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;font:13px sans-serif\">';\nout += \"<tr>\" +\n       \"<th\" + TH + \">Common Name</th>\" +\n       \"<th\" + TH + \">#detections</th>\" +\n       \"<th\" + TH + \">last seen</th>\" +\n       \"<th\" + TH + \">Scientific Name</th></tr>\";\n\nvar total = 0;\nfor (var i = 0; i < list.length; i++) {\n    var s = list[i];\n    total += Number(s.n || 0);\n    // The collage deep-links on the scientific name; apt.js matches\n    // /^#sci=([^&]+)/ and switches to that bird on arrival.\n    var url = SITE + \"#sci=\" + encodeURIComponent(s.sci);\n    out += \"<tr>\" +\n           \"<td\" + TD + \">\" + esc(s.com) + \"</td>\" +\n           \"<td\" + TDR + \">\" + Number(s.n || 0) + \"</td>\" +\n           \"<td\" + TD + \">\" + hhmm(s.last_seen) + \"</td>\" +\n           '<td' + TD + '><a href=\"' + url + '\">' +\n             \"<i>\" + esc(s.sci) + \"</i></a></td>\" +\n           \"</tr>\";\n}\nout += \"</table>\";\nout += '<p style=\"font:11px sans-serif;color:#666\">' + list.length +\n       \" species, \" + total + \" detections.</p>\";\n\nmsg.payload = out;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 900,
+    "y": 120,
+    "wires": [
+      [
+        "bird_a_file"
+      ]
+    ]
+  },
+  {
+    "id": "bird_a_file",
+    "type": "file",
+    "z": "birds_daily",
+    "name": "UpdateDailyEmail",
+    "filename": "/share/DailyEmail/DailyEmail.txt",
+    "filenameType": "str",
+    "appendNewline": true,
+    "createDir": true,
+    "overwriteFile": "false",
+    "encoding": "none",
+    "x": 1120,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "bird_b_mqtt",
+    "type": "mqtt in",
+    "z": "birds_daily",
+    "name": "birdnet/#",
+    "topic": "birdnet/#",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "bird_b_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 190,
+    "y": 260,
+    "wires": [
+      [
+        "bird_b_accum"
+      ]
+    ]
+  },
+  {
+    "id": "bird_b_accum",
+    "type": "function",
+    "z": "birds_daily",
+    "name": "Accumulate day",
+    "func": "\n// Keep the latest reading per species across the day.\n//\n// The bridge polls with hours=24, so each message's n is the detection count\n// over the trailing 24 hours as of that message - already a daily figure. So\n// take the newest n per species rather than counting messages, which would only\n// ever be a lower bound (the bridge publishes once per poll cycle in which\n// last_seen advanced, however many calls happened inside it).\n//\n// Caveat this cannot fix: n is a ROLLING 24h window anchored at the species'\n// last sighting, not the calendar day. A bird last heard at 06:00 carries a\n// count reaching back into the previous day. Flow A's single midnight query has\n// the same window but asks once, at the moment it matters, so it does not skew\n// per species. Use Flow A if the numbers need to be defensible.\nvar p = msg.payload || {};\nif (!p.sci) { return null; }\n\nvar day = flow.get(\"birdDay\") || {};\nvar prev = day[p.sci] || {};\n\nday[p.sci] = {\n    sci: p.sci,\n    com: p.com || prev.com,\n    n: (p.n === undefined || p.n === null) ? (prev.n || 0) : Number(p.n),\n    last_seen: p.last_seen || prev.last_seen\n};\n\nflow.set(\"birdDay\", day);\nreturn null;   // nothing downstream until the midnight trigger\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 260,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "bird_b_inject",
+    "type": "inject",
+    "z": "birds_daily",
+    "name": "Midnight bird report (MQTT)",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "00 00 * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "BirdReport",
+    "payload": "",
+    "payloadType": "date",
+    "x": 230,
+    "y": 340,
+    "wires": [
+      [
+        "bird_b_day"
+      ]
+    ]
+  },
+  {
+    "id": "bird_b_day",
+    "type": "function",
+    "z": "birds_daily",
+    "name": "Day -> msg.birds + reset",
+    "func": "\n// Hand the accumulated day to the table builder, then clear it for tomorrow.\nvar day = flow.get(\"birdDay\") || {};\nmsg.birds = Object.keys(day).map(function (k) { return day[k]; });\nflow.set(\"birdDay\", {});\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 520,
+    "y": 340,
+    "wires": [
+      [
+        "bird_b_table"
+      ]
+    ]
+  },
+  {
+    "id": "bird_b_table",
+    "type": "function",
+    "z": "birds_daily",
+    "name": "Build HTML table",
+    "func": "\n// Build the end-of-day HTML table.\n//\n// Input: msg.birds = [ { sci, com, n, last_seen }, ... ]\n// Output: msg.payload = HTML fragment, ready to append to the daily email.\n\nvar SITE = \"https://shannstainable.fewings.org/birds/\";\nvar list = msg.birds || [];\n\nfunction esc(s) {\n    return String(s === null || s === undefined ? \"\" : s)\n        .replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\")\n        .replace(/>/g, \"&gt;\").replace(/\"/g, \"&quot;\");\n}\n\n// last_seen arrives as \"YYYY-MM-DD HH:MM:SS\" already in the station's local\n// time (sqlite stores Date and Time as the analyser wrote them), so no timezone\n// conversion is wanted here - only the clock time is interesting in a\n// single-day report.\nfunction hhmm(ls) {\n    var m = /\\d{4}-\\d{2}-\\d{2}[ T](\\d{2}:\\d{2})/.exec(String(ls || \"\"));\n    return m ? m[1] : esc(ls);\n}\n\n// Busiest first, then alphabetical, so the interesting rows are at the top.\nlist.sort(function (a, b) {\n    return (Number(b.n || 0) - Number(a.n || 0)) ||\n           String(a.com || \"\").localeCompare(String(b.com || \"\"));\n});\n\nvar out = '<h3 style=\"margin:0 0 6px\"><a href=\"' + SITE +\n          '\" style=\"text-decoration:none\">Shannstainable Birds</a></h3>';\n\nif (!list.length) {\n    out += \"<p>No birds detected.</p>\";\n    msg.payload = out;\n    return msg;\n}\n\n// Inline styles rather than a stylesheet: most mail clients strip <style>.\nvar TH = ' style=\"text-align:left;padding:3px 8px;border-bottom:1px solid #999\"';\nvar TD = ' style=\"padding:3px 8px;border-bottom:1px solid #eee\"';\nvar TDR = ' style=\"padding:3px 8px;border-bottom:1px solid #eee;text-align:right\"';\n\nout += '<table cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;font:13px sans-serif\">';\nout += \"<tr>\" +\n       \"<th\" + TH + \">Common Name</th>\" +\n       \"<th\" + TH + \">#detections</th>\" +\n       \"<th\" + TH + \">last seen</th>\" +\n       \"<th\" + TH + \">Scientific Name</th></tr>\";\n\nvar total = 0;\nfor (var i = 0; i < list.length; i++) {\n    var s = list[i];\n    total += Number(s.n || 0);\n    // The collage deep-links on the scientific name; apt.js matches\n    // /^#sci=([^&]+)/ and switches to that bird on arrival.\n    var url = SITE + \"#sci=\" + encodeURIComponent(s.sci);\n    out += \"<tr>\" +\n           \"<td\" + TD + \">\" + esc(s.com) + \"</td>\" +\n           \"<td\" + TDR + \">\" + Number(s.n || 0) + \"</td>\" +\n           \"<td\" + TD + \">\" + hhmm(s.last_seen) + \"</td>\" +\n           '<td' + TD + '><a href=\"' + url + '\">' +\n             \"<i>\" + esc(s.sci) + \"</i></a></td>\" +\n           \"</tr>\";\n}\nout += \"</table>\";\nout += '<p style=\"font:11px sans-serif;color:#666\">' + list.length +\n       \" species, \" + total + \" detections.</p>\";\n\nmsg.payload = out;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 800,
+    "y": 340,
+    "wires": [
+      [
+        "bird_b_file"
+      ]
+    ]
+  },
+  {
+    "id": "bird_b_file",
+    "type": "file",
+    "z": "birds_daily",
+    "name": "UpdateDailyEmail",
+    "filename": "/share/DailyEmail/DailyEmail.txt",
+    "filenameType": "str",
+    "appendNewline": true,
+    "createDir": true,
+    "overwriteFile": "false",
+    "encoding": "none",
+    "x": 1040,
+    "y": 340,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "bird_b_broker",
+    "type": "mqtt-broker",
+    "name": "MQTT broker",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "closeTopic": "",
+    "closeQos": "0",
+    "willTopic": "",
+    "willQos": "0",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "birds_daily",
+    "type": "tab",
+    "label": "Birds daily email",
+    "disabled": false,
+    "info": "End-of-day bird table for the daily email.\n\nFlow A (top) is recommended: it asks the BirdNET API for the last 24h at\nmidnight and gets exact per-species counts from the database, with no\nstate to lose.\n\nFlow B (bottom) tracks the MQTT stream instead. The bridge polls with\nhours=24, so each message already carries a daily count and Flow B keeps\nthe latest per species. Two caveats: that count is a rolling 24h window\nanchored at the species' last sighting rather than the calendar day, so a\nbird last heard early reaches back into the previous day; and the tally is\nlost if Node-RED restarts mid-day without persistent context.\n\nEnable ONE of them, or both will append two tables to the same file.",
+    "env": []
+  }
+]
