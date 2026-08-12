@@ -548,9 +548,49 @@ docker compose exec avianvisitors journalctl -u birdnet_recording -n 50
 docker compose exec avianvisitors cat /proc/asound/cards
 ```
 
-The usual cause is a wrong `REC_CARD`. Card numbering can shift across host
-reboots if you have more than one audio device; pin it by name instead, e.g.
-`plughw:CARD=Device,DEV=0`.
+The usual cause is a wrong `REC_CARD`. Check the startup log first: the init
+lists every capture device it can see and validates `REC_CARD` against them.
+
+```bash
+docker compose logs avianvisitors | grep avian-init
+```
+
+```
+[avian-init] capture devices visible to the container:
+[avian-init]   card 3 [UM02]  -> plughw:3,0  or  plughw:CARD=UM02,DEV=0
+[avian-init] WARNING: REC_CARD is 'plughw:1,0' but /dev/snd/pcmC1D0c does not exist,
+```
+
+**`arecord: audio open error: No such file or directory`** means exactly that:
+`REC_CARD` names a card with no capture node. Two causes, in order of
+likelihood.
+
+*Wrong card number.* `arecord -l` on the host gives the truth. Card numbers are
+assigned in probe order and change when you re-plug the mic or add another sound
+card, so pin it by name: `REC_CARD=plughw:CARD=UM02,DEV=0` rather than
+`plughw:3,0`.
+
+*`/dev/snd` not passed through.* Compare host and container:
+
+```bash
+ls -l /dev/snd/                                     # host
+docker compose exec avianvisitors ls -l /dev/snd/   # container
+```
+
+The container needs a `pcmC<card>D0c` node for the card you named. If `/dev/snd`
+is empty or absent, the `devices:` entry is missing from `docker-compose.yml`.
+
+If the nodes are there but still unreadable, it is group ownership. The device
+nodes belong to the host's `audio` group, and `group_add: [audio]` resolves that
+name in the *container's* `/etc/group`. Both Debian and Raspberry Pi OS use gid
+29 so they normally agree, but compare the numeric gids if in doubt:
+
+```bash
+stat -c '%g' /dev/snd/controlC3                            # host
+docker compose exec avianvisitors stat -c '%g' /dev/snd/controlC3
+```
+
+If they differ, replace `group_add: [audio]` with the host's numeric gid.
 
 **`arecord: main:830: audio open error: Device or resource busy`**
 

@@ -265,13 +265,61 @@ check_audio() {
     return 0
   fi
 
-  if [ "${REC_CARD:-default}" = "default" ]; then
-    log "WARNING: REC_CARD is 'default'. That routes through PulseAudio, which"
-    log "         this container deliberately does not run. Set REC_CARD to a"
-    log "         real ALSA device instead, e.g. plughw:1,0. Capture cards seen:"
-    grep -E '^\s*[0-9]+' /proc/asound/cards 2>/dev/null | sed 's/^/         /' || true
+  # What the container can actually capture from. /proc/asound is the host's
+  # ALSA state and is visible even without /dev/snd passed through, so the
+  # authoritative test is the device node: /dev/snd/pcmC<card>D<dev>c is the
+  # capture endpoint arecord opens.
+  log "capture devices visible to the container:"
+  local found=0 n nm
+  while read -r n nm; do
+    if [ -e "/dev/snd/pcmC${n}D0c" ]; then
+      log "  card $n [$nm]  -> plughw:${n},0  or  plughw:CARD=${nm},DEV=0"
+      found=1
+    else
+      log "  card $n [$nm]  (no capture node; playback only, or not passed through)"
+    fi
+  done < <(awk '/^ *[0-9]+ \[/ { nm=$2; gsub(/[][]/,"",nm); print $1, nm }' \
+             /proc/asound/cards 2>/dev/null)
+  [ "$found" -eq 1 ] || log "  (none with a capture node)"
+
+  # Validate REC_CARD against that, rather than reporting success and letting
+  # arecord fail later with "audio open error: No such file or directory",
+  # which says nothing about which card it wanted or what exists.
+  local rc="${REC_CARD:-default}" want=""
+  case "$rc" in
+    default)
+      log "WARNING: REC_CARD is 'default'. That routes through PulseAudio, which"
+      log "         this container deliberately does not run. Set it to one of"
+      log "         the devices listed above."
+      return 0
+      ;;
+    *CARD=*)
+      # plughw:CARD=UM02,DEV=0 - resolve the name to a card number.
+      nm=${rc#*CARD=}; nm=${nm%%,*}
+      want=$(awk -v want="$nm" '/^ *[0-9]+ \[/ { c=$2; gsub(/[][]/,"",c);
+               if (c == want) print $1 }' /proc/asound/cards 2>/dev/null)
+      if [ -z "$want" ]; then
+        log "WARNING: REC_CARD names card '$nm', which is not present."
+        return 0
+      fi
+      ;;
+    *:[0-9]*)
+      want=${rc##*:}; want=${want%%,*}
+      ;;
+    *)
+      log "audio source: ALSA device $rc (unrecognised form, not validated)"
+      return 0
+      ;;
+  esac
+
+  if [ -e "/dev/snd/pcmC${want}D0c" ]; then
+    log "audio source: ALSA device $rc (card $want, capture node present)"
   else
-    log "audio source: ALSA device ${REC_CARD}"
+    log "WARNING: REC_CARD is '$rc' but /dev/snd/pcmC${want}D0c does not exist,"
+    log "         so arecord will fail with 'audio open error: No such file or"
+    log "         directory'. Pick one of the cards listed above."
+    log "         Card numbers can change across reboots and when USB devices"
+    log "         are re-plugged; the plughw:CARD=<name>,DEV=0 form is stable."
   fi
 }
 
