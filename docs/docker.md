@@ -592,10 +592,54 @@ docker compose exec avianvisitors stat -c '%g' /dev/snd/controlC3
 
 If they differ, replace `group_add: [audio]` with the host's numeric gid.
 
-**`arecord: main:830: audio open error: Device or resource busy`**
+**`Device or resource busy`, or the live stream never starts**
 
-Something on the host already holds the mic. The container and the host cannot
-both capture from it.
+An ALSA capture device admits exactly **one** reader. `birdnet_recording` holds
+the mic with `arecord`, so `livestream`'s ffmpeg cannot open it and logs:
+
+```
+plughw:CARD=UM02,DEV=0: Input/output error
+[alsa @ 0x...] cannot open audio device plughw:CARD=UM02,DEV=0 (Device or resource busy)
+```
+
+Recording works, the stream does not. Upstream avoids this by recommending
+`REC_CARD=default`, which on a Pi routes through PulseAudio and mixes several
+readers; this container runs no sound server, so `default` resolves to nothing.
+
+ALSA's own answer is the `dsnoop` plugin, which fans one capture stream out to
+several clients with no daemon. Set the raw hardware and point `REC_CARD` at the
+shared device:
+
+```bash
+ALSA_HW_DEVICE=hw:CARD=UM02,DEV=0   # raw hw:, NOT plughw:
+REC_CARD=default
+ALSA_HW_CHANNELS=1                  # must match the hardware; dsnoop cannot convert
+```
+
+The init then writes `/etc/asound.conf` defining `pcm.!default` as a plug over
+dsnoop, and both services capture happily. It reports what it did:
+
+```
+[avian-init] ALSA: sharing hw:CARD=UM02,DEV=0 via dsnoop (channels=1 rate=48000)
+[avian-init] audio source: ALSA 'default' -> dsnoop over hw:CARD=UM02,DEV=0
+[avian-init]   shared, so birdnet_recording and livestream can both capture.
+```
+
+`ALSA_HW_CHANNELS` matters: unlike `plughw`, `dsnoop` cannot re-channel or
+resample, so its slave parameters must match what the hardware actually does. If
+the recording log says `Mono`, leave it at 1; if `Stereo`, set 2. Getting it
+wrong makes *both* services fail to open the device, which is worse than the
+problem you started with, so change one thing at a time.
+
+If you do not want the live stream, ignore all of this: point `REC_CARD` straight
+at `plughw:CARD=...` and stop the service.
+
+```bash
+docker compose exec avianvisitors systemctl stop livestream
+```
+
+Separately, if the **host** is also capturing from the mic, the container cannot
+have it either. Only one of them can.
 
 **`birdnet_analysis` logs `no more notifications: restarting...` every minute.**
 

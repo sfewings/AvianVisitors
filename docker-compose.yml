@@ -41,9 +41,17 @@ services:
       # Audio source. Leave RTSP_STREAM empty to use the USB mic passed through
       # below; set it to an rtsp:// URL to use a network source instead, in
       # which case the `devices` block becomes unnecessary.
-      REC_CARD: ${REC_CARD:-plughw:1,0}
+      REC_CARD: ${REC_CARD:-}
       RTSP_STREAM: ${RTSP_STREAM:-}
       CHANNELS: ${CHANNELS:-2}
+
+      # Set these only if you want the live audio stream as well as recording.
+      # An ALSA capture device admits one reader, so arecord and ffmpeg cannot
+      # both open the mic; ALSA_HW_DEVICE builds a shared dsnoop device and
+      # REC_CARD should then be "default". See docs/docker.md.
+      ALSA_HW_DEVICE: ${ALSA_HW_DEVICE:-}
+      ALSA_HW_CHANNELS: ${ALSA_HW_CHANNELS:-}
+      ALSA_HW_RATE: ${ALSA_HW_RATE:-}
 
       CONFIDENCE: ${CONFIDENCE:-0.7}
       SENSITIVITY: ${SENSITIVITY:-1.25}
