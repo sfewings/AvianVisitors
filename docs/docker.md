@@ -390,16 +390,24 @@ server {
     # require authentication by default:
     #   avian/api/config.php          rewrites birdnet.conf, restarts services
     #   avian/api/birdnet-status.php  restarts services on POST
-    #   avian/api/cutout.php          shells out
     #   /terminal                     gotty -w, a writable web shell
     #   /scripts                      serves adminer.php, a full DB admin tool
     #   /phpsysinfo, /Processed       host detail and raw recordings
     #   /stats, /log                  stock UI's streamlit and gotty views
     # Reach all of it on the LAN instead, at http://192.168.1.133/ directly.
     #
+    # Those two PHP endpoints are only used by the admin overlay's Settings and
+    # System panels (loadSettings() and renderAdminSystem() in apt.js), so the
+    # public collage loses nothing by their absence.
+    #
+    # NOTE: cutout.php must NOT be denied. It shells out to rembg, which makes it
+    # look like admin surface, but it is what serves every bird image in the
+    # collage - via <img> rather than fetch(), which is easy to miss when
+    # auditing. Denying it gives a working page with no birds on it.
+    #
     # This is a denylist: a new API endpoint added later is public by default.
     # Prefer an allowlist if the API surface grows.
-    location ~ ^/birds/(avian/api/(config|birdnet-status|cutout)\.php|terminal|scripts|phpsysinfo|Processed|log|stats)(/|$) {
+    location ~ ^/birds/(avian/api/(config|birdnet-status)\.php|terminal|scripts|phpsysinfo|Processed|log|stats)(/|$) {
         return 404;
     }
 
@@ -462,10 +470,37 @@ Then in the `/birds/` block replace `proxy_set_header Connection "";` with:
 
 ### What ends up public
 
-Reachable from the internet: the collage, its illustrations and detection list,
-per-detection audio and spectrograms (served through `recording.php` and
-`spectrogram.php`, both of which reject `..` and exclude `/` from their
-filename regex), and the live stream.
+Reachable from the internet: the collage, its illustrations (`cutout.php`), the
+detection list (`menu.php`, `birdnet-api.php`), per-detection audio and
+spectrograms (`recording.php`, `spectrogram.php`), species text (`wiki.php`), and
+the live stream.
+
+Those are all read-only and input-validated. `cutout.php` rejects anything that
+is not a binomial or trinomial before touching the filesystem or an upstream, and
+clamps `?pose=` to a two-digit integer; `recording.php` and `spectrogram.php`
+reject `..` and exclude `/` from their filename regex.
+
+One residual consideration if you are exposed to the open internet:
+`cutout.php` will fetch from Wikipedia and run rembg for a species it has no
+local image for, which is CPU and memory heavy on a Pi. Results are cached and
+served with `max-age=86400`, so repeats are cheap, but a flood of *distinct*
+plausible binomials would not be. If that worries you, rate limit it. Note the
+first paint of the collage legitimately requests many images at once, so the
+limit needs a generous burst:
+
+```nginx
+# in http{}, e.g. /etc/nginx/conf.d/ratelimit.conf
+limit_req_zone $binary_remote_addr zone=cutout:1m rate=10r/s;
+```
+
+```nginx
+# inside server{}, before the general /birds/ block
+location = /birds/avian/api/cutout.php {
+    limit_req zone=cutout burst=50 nodelay;
+    proxy_pass http://192.168.1.133/avian/api/cutout.php$is_args$args;
+    proxy_set_header Host $host;
+}
+```
 
 LAN-only: settings, service restarts, logs, the system panel, the stock
 BirdNET-Pi tools, the web terminal and the database admin page.
