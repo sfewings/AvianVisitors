@@ -62,5 +62,9 @@ avian/assets/_legacy/
 # --- Docker deployment: local state, never committed ---
 # Bind-mounted birdnet.conf generated on first container start.
 /config/
+# Detections database, species lists, notification templates.
+/data/
+# Audio recordings, extractions and charts. Grows without bound.
+/recordings/
 # Holds the deployment's own coordinates, passwords and API keys.
 .env

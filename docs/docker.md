@@ -78,13 +78,73 @@ docker run --privileged --rm tonistiigi/binfmt --install arm64
 
 ## What lives where
 
-| Path | Volume | Contents |
+Everything is a host directory. No named volumes, so all container state is
+visible on the Pi and can be backed up, inspected and moved with ordinary tools.
+
+| Container path | Host path | Contents |
 |---|---|---|
-| `/config` | `./config` bind mount | `birdnet.conf`, the one file you may want to hand-edit |
-| `/data` | `avian-data` | `birds.db`, `BirdDB.txt`, species lists, notification templates |
-| `/home/birdnet/BirdSongs` | `avian-recordings` | Recordings, extractions, charts. This is the one that grows. |
+| `/config` | `./config` | `birdnet.conf`, the one file you may want to hand-edit |
+| `/data` | `${DATA_DIR:-./data}` | `birds.db`, `BirdDB.txt`, species lists, notification templates. Small; back this up. |
+| `/home/birdnet/BirdSongs` | `${RECORDINGS_DIR:-./recordings}` | Recordings, extractions, charts. Grows without bound. |
 | `/home/birdnet/BirdSongs/StreamData` | tmpfs | Raw 15s captures awaiting analysis. Deliberately not persisted. |
-| `…/avian/assets` | `${ASSETS_DIR}` bind mount, read-only | Illustrations, photo cutouts, sketches. **Required.** |
+| `…/avian/assets` | `${ASSETS_DIR:-./avian/assets}`, read-only | Illustrations, photo cutouts, sketches. **Required.** |
+
+Point `RECORDINGS_DIR` at whichever disk has room; on a Pi with a small SD card
+an external drive is worth using, since this is the one that grows.
+
+Two consequences of using host paths rather than named volumes, both handled:
+
+*Ownership.* A fresh named volume inherits ownership from the image; a bind mount
+arrives with whatever the host has, usually root. `ensure_data_roots` in
+`avian-container-init` takes ownership of each mount point at startup, and the
+first boot additionally walks the recordings tree.
+
+*Build context.* The defaults sit beside `docker-compose.yml`, so `.dockerignore`
+excludes `config/`, `data/` and `recordings/`. Without that the whole recordings
+tree would be packed up and sent to the Docker daemon on every build.
+
+### Migrating from the old named volumes
+
+Earlier versions used named volumes. Switching the compose file alone silently
+starts from an empty database and leaves the old data orphaned, so copy it across
+first:
+
+```bash
+docker compose down
+mkdir -p data recordings
+
+# The project name prefixes the volume names; confirm yours with `docker volume ls`.
+for v in data recordings; do
+  docker run --rm \
+    -v "avianvisitors_avian-${v}:/from" \
+    -v "$PWD/${v}:/to" \
+    debian:bookworm-slim \
+    sh -c 'cp -a /from/. /to/'
+done
+
+# Let the container redo its ownership pass over the copied files.
+rm -f data/.permissions-done
+
+docker compose up -d
+```
+
+Then confirm the detection count survived before deleting anything:
+
+```bash
+docker compose exec avianvisitors sqlite3 /data/scripts/birds.db \
+  'select count(*) from detections;'
+```
+
+Only once that looks right:
+
+```bash
+docker volume rm avianvisitors_avian-data avianvisitors_avian-recordings
+```
+
+Removing `data/.permissions-done` matters: it is the marker that makes the
+recursive ownership and permission pass first-boot-only. Copied files land owned
+by root, and without deleting the marker that pass is skipped, leaving a
+recordings tree the container cannot write to.
 
 ### Illustration assets are not in the image
 
@@ -145,15 +205,18 @@ definition of user data.
 
 ### Backups
 
-`/config` and `/data` together are small and are what you actually need:
+`config/` and `data/` together are small and are what you actually need. Since
+both are plain directories, no Docker involvement is required:
 
 ```bash
-docker run --rm -v avian-data:/data -v "$PWD:/backup" debian:bookworm-slim \
-  tar czf /backup/avian-data.tgz -C /data .
-tar czf config.tgz config/
+tar czf avian-backup.tgz config data
 ```
 
-The recordings volume is optional and large. The in-app backup tool under
+Worth stopping the container first, or at least accepting that `birds.db` may be
+mid-write. `sqlite3 /data/scripts/birds.db ".backup /data/birds-backup.db"` gives
+a consistent copy without stopping anything.
+
+The recordings directory is optional and large. The in-app backup tool under
 Tools also still works and produces an archive the bare-metal install can
 restore.
 
@@ -390,16 +453,24 @@ server {
     # require authentication by default:
     #   avian/api/config.php          rewrites birdnet.conf, restarts services
     #   avian/api/birdnet-status.php  restarts services on POST
-    #   avian/api/cutout.php          shells out
     #   /terminal                     gotty -w, a writable web shell
     #   /scripts                      serves adminer.php, a full DB admin tool
     #   /phpsysinfo, /Processed       host detail and raw recordings
     #   /stats, /log                  stock UI's streamlit and gotty views
     # Reach all of it on the LAN instead, at http://192.168.1.133/ directly.
     #
+    # Those two PHP endpoints are only used by the admin overlay's Settings and
+    # System panels (loadSettings() and renderAdminSystem() in apt.js), so the
+    # public collage loses nothing by their absence.
+    #
+    # NOTE: cutout.php must NOT be denied. It shells out to rembg, which makes it
+    # look like admin surface, but it is what serves every bird image in the
+    # collage - via <img> rather than fetch(), which is easy to miss when
+    # auditing. Denying it gives a working page with no birds on it.
+    #
     # This is a denylist: a new API endpoint added later is public by default.
     # Prefer an allowlist if the API surface grows.
-    location ~ ^/birds/(avian/api/(config|birdnet-status|cutout)\.php|terminal|scripts|phpsysinfo|Processed|log|stats)(/|$) {
+    location ~ ^/birds/(avian/api/(config|birdnet-status)\.php|terminal|scripts|phpsysinfo|Processed|log|stats)(/|$) {
         return 404;
     }
 
@@ -462,10 +533,37 @@ Then in the `/birds/` block replace `proxy_set_header Connection "";` with:
 
 ### What ends up public
 
-Reachable from the internet: the collage, its illustrations and detection list,
-per-detection audio and spectrograms (served through `recording.php` and
-`spectrogram.php`, both of which reject `..` and exclude `/` from their
-filename regex), and the live stream.
+Reachable from the internet: the collage, its illustrations (`cutout.php`), the
+detection list (`menu.php`, `birdnet-api.php`), per-detection audio and
+spectrograms (`recording.php`, `spectrogram.php`), species text (`wiki.php`), and
+the live stream.
+
+Those are all read-only and input-validated. `cutout.php` rejects anything that
+is not a binomial or trinomial before touching the filesystem or an upstream, and
+clamps `?pose=` to a two-digit integer; `recording.php` and `spectrogram.php`
+reject `..` and exclude `/` from their filename regex.
+
+One residual consideration if you are exposed to the open internet:
+`cutout.php` will fetch from Wikipedia and run rembg for a species it has no
+local image for, which is CPU and memory heavy on a Pi. Results are cached and
+served with `max-age=86400`, so repeats are cheap, but a flood of *distinct*
+plausible binomials would not be. If that worries you, rate limit it. Note the
+first paint of the collage legitimately requests many images at once, so the
+limit needs a generous burst:
+
+```nginx
+# in http{}, e.g. /etc/nginx/conf.d/ratelimit.conf
+limit_req_zone $binary_remote_addr zone=cutout:1m rate=10r/s;
+```
+
+```nginx
+# inside server{}, before the general /birds/ block
+location = /birds/avian/api/cutout.php {
+    limit_req zone=cutout burst=50 nodelay;
+    proxy_pass http://192.168.1.133/avian/api/cutout.php$is_args$args;
+    proxy_set_header Host $host;
+}
+```
 
 LAN-only: settings, service restarts, logs, the system panel, the stock
 BirdNET-Pi tools, the web terminal and the database admin page.
