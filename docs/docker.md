@@ -183,6 +183,59 @@ the two. Update with `docker compose pull && docker compose up -d`.
 
 ---
 
+## The two web UIs, on separate ports
+
+There are two front ends in this repo, both served from the same Caddy web root:
+
+- `avian/frontend/index.html`, the collage
+- `homepage/index.php`, the stock BirdNET-Pi interface
+
+By default the collage owns `/` and the stock UI sits at `/index.php`, because
+[`update_caddyfile.sh`](../scripts/update_caddyfile.sh) overrides
+`php_fastcgi`'s `try_files` to prefer `index.html`.
+
+Set `STOCK_UI_PORT` to also give the stock UI a root of its own:
+
+```bash
+STOCK_UI_PORT=8081        # container port
+STOCK_UI_HOST_PORT=8081   # host side, if you want it elsewhere
+```
+
+| URL | UI |
+|---|---|
+| `http://<host>:8080/` | Collage |
+| `http://<host>:8080/index.php` | Stock UI (still works) |
+| `http://<host>:8081/` | Stock UI at its own root |
+
+Both sites share one web root and one snippet, so the live stream, `/stats`,
+`/log`, `/terminal` and any `CADDY_PWD` basic auth apply identically on both. The
+only difference between them is which index file `/` resolves to: port 80
+overrides `try_files` to prefer `index.html`, port 8081 keeps Caddy's default,
+which prefers `index.php`.
+
+Leaving `STOCK_UI_PORT` empty disables the second site. Publishing the port with
+the site disabled is harmless; connections are simply refused.
+
+Worth knowing if you put this behind the reverse proxy described below: the
+second site is a *separate port*, so it needs its own `location` block and
+`proxy_pass` to `192.168.1.133:8081`. Nothing about it is reachable through the
+`/birds/` prefix.
+
+### Why this lives in update_caddyfile.sh
+
+It has to. `avian-container-init` runs that script on every boot, so a
+hand-written second site in `/etc/caddy/Caddyfile` would be erased on restart.
+
+The script previously duplicated its whole site body between the with-password
+and without-password branches; a second site would have made that four copies of
+the same twenty lines. It now emits a Caddy snippet (`(birdnet_common)`) that
+both sites import. Verified behaviour-preserving by adapting the old and new
+generated Caddyfiles to JSON with `caddy adapt` and diffing: identical with
+`STOCK_UI_PORT` empty, both with and without `CADDY_PWD`, once bcrypt's random
+salt is normalised.
+
+---
+
 ## Optional: the MQTT bridge
 
 [`avian/forwarding/mqtt-bridge.py`](../avian/forwarding/mqtt-bridge.py) polls the

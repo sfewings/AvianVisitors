@@ -18,11 +18,16 @@ services:
     container_name: avianvisitors
     restart: unless-stopped
 
-    # Caddy is the only thing published. icecast (8000), gotty (8080, 8888) and
-    # streamlit (8501) bind to localhost inside the container and are reached
-    # through Caddy's reverse proxies.
+    # Two Caddy sites. icecast (8000), gotty (8080, 8888) and streamlit (8501)
+    # bind to localhost inside the container and are reached through Caddy's
+    # reverse proxies, so they are not published.
     ports:
+      # The AvianVisitors collage.
       - "8080:80"
+      # The stock BirdNET-Pi UI, served at "/" on its own port. Only listens
+      # when STOCK_UI_PORT is set below; publishing the port with the site
+      # disabled is harmless, connections are simply refused.
+      - "${STOCK_UI_HOST_PORT:-8081}:8081"
 
     environment:
       # Anything set here is written into birdnet.conf on every start and wins
@@ -49,6 +54,11 @@ services:
       # expose this beyond your LAN.
       CADDY_PWD: ${CADDY_PWD:-}
       BIRDNETPI_URL: ${BIRDNETPI_URL:-}
+
+      # Serve the stock BirdNET-Pi UI at "/" on this container port, in addition
+      # to the collage on 80. Empty disables the second site entirely. Must match
+      # the container side of the port mapping above.
+      STOCK_UI_PORT: ${STOCK_UI_PORT:-}
       BIRDWEATHER_ID: ${BIRDWEATHER_ID:-}
       DATABASE_LANG: ${DATABASE_LANG:-en}
 

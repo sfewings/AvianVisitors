@@ -86,6 +86,14 @@ ICE_PWD=birdnetpi
 
 BIRDNETPI_URL=
 
+## STOCK_UI_PORT optionally serves the original BirdNET-Pi interface on a port
+## of its own, so it is reachable at "/" there instead of only at /index.php
+## behind the AvianVisitors collage. Same web root, same live stream, stats,
+## log and terminal; the only difference is which index file "/" resolves to.
+## Empty (the default) means the collage is the only site, as before.
+
+STOCK_UI_PORT=
+
 #----------------------------  RTSP Stream URL  -------------------------------#
 
 ## If RTSP_STREAM is set, the system will use the RTSP stream as its audio

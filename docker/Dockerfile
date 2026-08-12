@@ -250,9 +250,11 @@ ENV TZ=UTC \
 
 VOLUME ["/config", "/data", "/home/birdnet/BirdSongs"]
 
-# Only Caddy is published. icecast (8000), gotty (8080/8888) and streamlit
-# (8501) all bind to localhost and are reached through Caddy's reverse proxies.
-EXPOSE 80
+# Caddy serves the collage on 80, and the stock BirdNET-Pi UI on 8081 when
+# STOCK_UI_PORT is set. icecast (8000), gotty (8080/8888) and streamlit (8501)
+# all bind to localhost and are reached through Caddy's reverse proxies, so they
+# are deliberately not exposed.
+EXPOSE 80 8081
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
   CMD curl -fsS http://localhost/ >/dev/null || exit 1
